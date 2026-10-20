@@ -1,0 +1,23 @@
+spring:
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/springrag}
+    username: ${DATABASE_USER:springrag}
+    password: ${DATABASE_PASSWORD:springrag}
+  sql.init.mode: always
+  servlet.multipart.max-file-size: 20MB
+  servlet.multipart.max-request-size: 20MB
+  ai:
+    model.chat: none
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      embedding.options.model: text-embedding-3-small
+    vectorstore.pgvector:
+      initialize-schema: true
+      dimensions: 1536
+      index-type: HNSW
+      distance-type: COSINE_DISTANCE
+    chat.memory.repository.jdbc.initialize-schema: always
+app:
+  upload-dir: ${UPLOAD_DIR:./data/uploads}
+  admin-password: ${APP_ADMIN_PASSWORD:}
+  user-password: ${APP_USER_PASSWORD:}

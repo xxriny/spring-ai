@@ -1,0 +1,9 @@
+.m2/
+target/
+frontend/node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
+frontend/preview.png
+data/
+.env
+*.log
