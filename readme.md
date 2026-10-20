@@ -1,4 +1,4 @@
-# Spring RAG 챗봇 · 첫 버전
+# Spring RAG 챗봇
 
 Spring Boot 4 + Spring AI 2.0.1 백엔드, React + Vite 화면, PostgreSQL/pgvector로 구성한 문서 기반 챗봇입니다. 화면은 딥블루 색상, 대화 목록, 본문, 참고 자료 패널로 구성했습니다.
 
