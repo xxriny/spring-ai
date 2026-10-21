@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS knowledge_document (
   scope VARCHAR(10) NOT NULL CHECK (scope IN ('SHARED', 'PRIVATE')),
   owner_id VARCHAR(100),
   title TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'uncategorized',
   source_url TEXT,
   stored_path TEXT,
   sha256 VARCHAR(64) NOT NULL,
@@ -11,6 +12,7 @@ CREATE TABLE IF NOT EXISTS knowledge_document (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CHECK ((scope = 'SHARED' AND owner_id IS NULL) OR (scope = 'PRIVATE' AND owner_id IS NOT NULL))
 );
+ALTER TABLE knowledge_document ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'uncategorized';
 CREATE UNIQUE INDEX IF NOT EXISTS knowledge_document_source ON knowledge_document(scope, COALESCE(owner_id,''), source_url) WHERE source_url IS NOT NULL;
 CREATE TABLE IF NOT EXISTS knowledge_chunk (
   document_id UUID NOT NULL REFERENCES knowledge_document(id) ON DELETE CASCADE,

@@ -1,4 +1,4 @@
-package dev.springrag;
+package dev.springrag.service;
 
 import java.net.InetAddress;
 import java.net.URI;

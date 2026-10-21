@@ -18,6 +18,7 @@ spring:
       distance-type: COSINE_DISTANCE
     chat.memory.repository.jdbc.initialize-schema: always
 app:
+  reranker.url: ${RERANKER_URL:http://127.0.0.1:8091/rerank}
   upload-dir: ${UPLOAD_DIR:./data/uploads}
   admin-password: ${APP_ADMIN_PASSWORD:}
   user-password: ${APP_USER_PASSWORD:}

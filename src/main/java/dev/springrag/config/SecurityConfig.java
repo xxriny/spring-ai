@@ -1,4 +1,4 @@
-package dev.springrag;
+package dev.springrag.config;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;

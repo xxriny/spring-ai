@@ -1,5 +1,7 @@
 package dev.springrag;
 
+import dev.springrag.service.CrawlPolicy;
+
 import static org.junit.jupiter.api.Assertions.*;
 import java.net.URI;
 import org.junit.jupiter.api.Test;

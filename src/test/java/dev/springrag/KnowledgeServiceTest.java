@@ -1,14 +1,48 @@
 package dev.springrag;
 
+import dev.springrag.dao.KnowledgeDao;
+import dev.springrag.service.KnowledgeService;
+
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.lang.reflect.Proxy;
+import java.nio.file.Path;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.mock.web.MockMultipartFile;
 
 class KnowledgeServiceTest {
+    @TempDir Path tempDir;
+
+    @Test void blankCategoryIsRejectedBeforeWritingVectors() {
+        VectorStore vectors = (VectorStore) Proxy.newProxyInstance(VectorStore.class.getClassLoader(),
+            new Class<?>[] { VectorStore.class }, (proxy, method, args) -> { throw new AssertionError("벡터 호출됨"); });
+        var service = new KnowledgeService(new KnowledgeDao(new JdbcTemplate()), vectors, new TransactionTemplate(), "/tmp/spring-rag-test");
+        var file = new MockMultipartFile("file", "note.txt", "text/plain", "hello".getBytes());
+        assertThrows(IllegalArgumentException.class, () -> service.upload(file, " ", "user", false));
+    }
+
+    @Test void categoryOverEightyCharactersIsRejected() {
+        VectorStore vectors = (VectorStore) Proxy.newProxyInstance(VectorStore.class.getClassLoader(),
+            new Class<?>[] { VectorStore.class }, (proxy, method, args) -> { throw new AssertionError("벡터 호출됨"); });
+        var service = new KnowledgeService(new KnowledgeDao(new JdbcTemplate()), vectors, new TransactionTemplate(), tempDir.toString());
+        var file = new MockMultipartFile("file", "note.txt", "text/plain", "hello".getBytes());
+        var error = assertThrows(IllegalArgumentException.class, () -> service.upload(file, "x".repeat(81), "user", false));
+        assertEquals("카테고리는 1~80자여야 합니다", error.getMessage());
+    }
+
     @Test void userCannotDeleteDocumentOutsideOwnScope() {
         JdbcTemplate db = new JdbcTemplate() {
             @Override public <T> T queryForObject(String sql, Class<T> requiredType, Object... args) {
@@ -20,7 +54,40 @@ class KnowledgeServiceTest {
         };
         VectorStore vectors = (VectorStore) Proxy.newProxyInstance(VectorStore.class.getClassLoader(),
             new Class<?>[] { VectorStore.class }, (proxy, method, args) -> { throw new AssertionError("벡터 삭제가 실행됨"); });
-        var service = new KnowledgeService(db, vectors, new TransactionTemplate(), "/tmp/spring-rag-test");
+        var service = new KnowledgeService(new KnowledgeDao(db), vectors, new TransactionTemplate(), "/tmp/spring-rag-test");
         assertThrows(IllegalArgumentException.class, () -> service.delete(UUID.randomUUID(), "user", false));
+    }
+
+    @Test void uploadStoresTrimmedCategoryOnPrivateAndSharedChunks() throws Exception {
+        AtomicReference<List<Document>> added = new AtomicReference<>();
+        VectorStore vectors = (VectorStore) Proxy.newProxyInstance(VectorStore.class.getClassLoader(),
+            new Class<?>[] { VectorStore.class }, (proxy, method, args) -> {
+                if (method.getName().equals("add")) { added.set((List<Document>) args[0]); return null; }
+                throw new AssertionError(method.getName());
+            });
+        AtomicReference<String> expectedScope = new AtomicReference<>();
+        KnowledgeDao repository = new KnowledgeDao(new JdbcTemplate()) {
+            @Override public void save(UUID id, boolean existing, String scope, String owner, String title, String url,
+                                String path, String hash, String category, List<String> chunkIds) {
+                assertEquals("Spring AI", category);
+                assertEquals(expectedScope.get(), scope);
+                assertEquals("PRIVATE".equals(scope) ? "user" : null, owner);
+                assertTrue(!chunkIds.isEmpty());
+            }
+        };
+        PlatformTransactionManager manager = new PlatformTransactionManager() {
+            @Override public TransactionStatus getTransaction(TransactionDefinition definition) { return new SimpleTransactionStatus(); }
+            @Override public void commit(TransactionStatus status) {}
+            @Override public void rollback(TransactionStatus status) {}
+        };
+        var service = new KnowledgeService(repository, vectors, new TransactionTemplate(manager), tempDir.toString());
+        var file = new MockMultipartFile("file", "note.txt", "text/plain", "Spring AI memory keeps conversation messages.".getBytes());
+
+        for (boolean admin : new boolean[] {false, true}) {
+            expectedScope.set(admin ? "SHARED" : "PRIVATE");
+            var item = service.upload(file, "  Spring AI  ", "user", admin);
+            assertEquals("Spring AI", item.category());
+            assertTrue(added.get().stream().allMatch(chunk -> "Spring AI".equals(chunk.getMetadata().get("category"))));
+        }
     }
 }

@@ -6,7 +6,7 @@ type Scope = 'SHARED' | 'PRIVATE'
 type Conversation = { id: string; title: string; scope: Scope }
 type Source = { title: string; url: string; excerpt: string; documentId: string; page?: number }
 type Message = { role: string; body: string; sources: Source[] }
-type DocumentItem = { id: string; title: string; scope: Scope; sourceUrl: string | null; status: string }
+type DocumentItem = { id: string; title: string; scope: Scope; sourceUrl: string | null; category: string; status: string }
 
 const preview = import.meta.env.DEV && new URLSearchParams(window.location.search).has('preview')
 const sampleConversation: Conversation = { id: 'preview', title: 'Spring AI의 대화 기억은 어떻게 동작하나요?', scope: 'SHARED' }
@@ -28,9 +28,10 @@ function App() {
   const [conversations, setConversations] = useState<Conversation[]>(preview ? [sampleConversation] : [])
   const [active, setActive] = useState<Conversation | null>(preview ? sampleConversation : null)
   const [messages, setMessages] = useState<Message[]>(preview ? sampleMessages : [])
-  const [documents, setDocuments] = useState<DocumentItem[]>(preview ? sampleSources.map(source => ({ id: source.documentId, title: source.title, scope: 'SHARED', sourceUrl: source.url, status: 'READY' })) : [])
+  const [documents, setDocuments] = useState<DocumentItem[]>(preview ? sampleSources.map(source => ({ id: source.documentId, title: source.title, scope: 'SHARED', sourceUrl: source.url, category: 'Spring AI docs', status: 'READY' })) : [])
   const [question, setQuestion] = useState('')
   const [seed, setSeed] = useState('')
+  const [category, setCategory] = useState('')
   const [busy, setBusy] = useState(false)
   const [libraryOpen, setLibraryOpen] = useState(false)
 
@@ -118,8 +119,10 @@ function App() {
 
   async function upload(file: File) {
     if (preview) { setError(`${file.name}: 화면 미리보기에서는 업로드할 수 없습니다.`); return }
+    if (!category.trim()) { setError('카테고리를 입력해 주세요.'); return }
     const body = new FormData()
     body.append('file', file)
+    body.append('category', category.trim())
     setBusy(true)
     try {
       await api('/documents', { method: 'POST', body })
@@ -133,7 +136,7 @@ function App() {
     event.preventDefault()
     setBusy(true)
     try {
-      const result = await api<{ indexed: number; skipped: number; errors: string[] }>('/admin/crawl', { method: 'POST', body: JSON.stringify({ url: seed }) })
+      const result = await api<{ indexed: number; skipped: number; errors: string[] }>('/admin/crawl', { method: 'POST', body: JSON.stringify({ url: seed, category: category.trim() }) })
       setDocuments(await api<DocumentItem[]>('/documents?scope=SHARED'))
       setError(`${result.indexed}개 문서 등록, ${result.skipped}개 건너뜀${result.errors.length ? `, 오류 ${result.errors.length}개` : ''}`)
       setSeed('')
@@ -171,7 +174,7 @@ function App() {
           <div className="composer-wrap">{error && <div className={'notice ' + (error.includes('등록') ? '' : 'error')} role="status">{error}</div>}<form className="composer" onSubmit={submit}><textarea aria-label="질문" placeholder="이어서 질문하기" value={question} onChange={e => setQuestion(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit() } }} rows={1}/><button type="submit" disabled={busy || !question.trim()} aria-label="질문 보내기">➤</button></form><small className="composer-hint">답변은 선택한 문서의 근거를 바탕으로 생성됩니다.</small></div>
         </section><aside className="source-panel"><div className="source-heading"><span className="eyebrow">SOURCES</span><h2>참고 자료</h2><p>답변에 사용된 문서를 확인하세요.</p></div>{sources.length ? sources.map((source, i) => <div className="source-card" key={i}><span className="source-number">{i + 1}</span><div><strong>{source.title}</strong><p>{source.excerpt}</p><small>{source.page ? `페이지 ${source.page} · ` : ''}{source.url === 'upload' ? '업로드 문서' : source.url}</small>{source.url.startsWith('http') && <a href={source.url} target="_blank" rel="noopener noreferrer">원문 열기 ↗</a>}</div></div>) : <div className="empty-sources">▤<p>질문을 입력하면<br/>참고한 문서가 여기에 표시됩니다.</p></div>}</aside></div>
     </main>
-    {libraryOpen && <div className="modal-backdrop" onClick={() => setLibraryOpen(false)}><section className="library" role="dialog" aria-modal="true" aria-label="지식 문서" onClick={e => e.stopPropagation()}><div className="library-head"><div><span className="eyebrow">KNOWLEDGE BASE</span><h2>지식 문서</h2></div><button onClick={() => setLibraryOpen(false)} aria-label="닫기">✕</button></div><p>{name === 'admin' ? '관리자 문서는 공용 지식으로 등록됩니다.' : '업로드한 문서는 내 문서로만 등록됩니다.'}</p><label className="upload-button">＋ 파일 업로드<input type="file" accept=".txt,.pdf,.doc,.docx,.html,.htm" disabled={busy} onChange={e => { const file = e.target.files?.[0]; if (file) upload(file); e.target.value = '' }}/></label>{name === 'admin' && <form className="crawl-form" onSubmit={crawl}><label>웹페이지 URL과 하위 페이지 수집</label><div><input type="url" placeholder="https://docs.example.com/guide/" value={seed} onChange={e => setSeed(e.target.value)} required/><button disabled={busy}>수집</button></div></form>}<div className="library-list">{documents.map(doc => <div key={doc.id} className="library-item"><span>▤</span><div><strong>{doc.title}</strong><small>{doc.sourceUrl || '업로드 문서'}</small></div><button onClick={() => deleteDocument(doc.id)} aria-label={`${doc.title} 삭제`}>삭제</button></div>)}{!documents.length && <p>아직 등록된 문서가 없습니다.</p>}</div></section></div>}
+    {libraryOpen && <div className="modal-backdrop" onClick={() => setLibraryOpen(false)}><section className="library" role="dialog" aria-modal="true" aria-label="지식 문서" onClick={e => e.stopPropagation()}><div className="library-head"><div><span className="eyebrow">KNOWLEDGE BASE</span><h2>지식 문서</h2></div><button onClick={() => setLibraryOpen(false)} aria-label="닫기">✕</button></div><p>{name === 'admin' ? '관리자 문서는 공용 지식으로 등록됩니다.' : '업로드한 문서는 내 문서로만 등록됩니다.'}</p><label className="category-field">카테고리<input value={category} onChange={e => setCategory(e.target.value)} maxLength={80} placeholder="예: Spring AI docs" required /></label><label className="upload-button">＋ 파일 업로드<input type="file" accept=".txt,.pdf,.doc,.docx,.html,.htm" disabled={busy} onChange={e => { const file = e.target.files?.[0]; if (file) upload(file); e.target.value = '' }}/></label>{name === 'admin' && <form className="crawl-form" onSubmit={crawl}><label>웹페이지 URL과 하위 페이지 수집</label><div><input type="url" placeholder="https://docs.example.com/guide/" value={seed} onChange={e => setSeed(e.target.value)} required/><button disabled={busy || !category.trim()}>수집</button></div></form>}<div className="library-list">{documents.map(doc => <div key={doc.id} className="library-item"><span>▤</span><div><strong>{doc.title}</strong><small>{doc.category} · {doc.sourceUrl || '업로드 문서'}</small></div><button onClick={() => deleteDocument(doc.id)} aria-label={`${doc.title} 삭제`}>삭제</button></div>)}{!documents.length && <p>아직 등록된 문서가 없습니다.</p>}</div></section></div>}
   </div>
 }
 
