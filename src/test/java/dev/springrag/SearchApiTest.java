@@ -26,5 +26,6 @@ class SearchApiTest {
         assertEquals("alice", owner.get());
         assertEquals(HttpStatus.BAD_REQUEST, controller.badRequest(new IllegalArgumentException("bad")).getStatusCode());
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE, controller.rerankerUnavailable().getStatusCode());
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, controller.ocrUnavailable().getStatusCode());
     }
 }

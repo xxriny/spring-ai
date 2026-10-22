@@ -19,6 +19,8 @@ spring:
     chat.memory.repository.jdbc.initialize-schema: always
 app:
   reranker.url: ${RERANKER_URL:http://127.0.0.1:8091/rerank}
+  ocr.url: ${OCR_URL:http://127.0.0.1:8092/ocr}
+  pdf-extraction.url: ${PDF_EXTRACTION_URL:http://127.0.0.1:8092/pdf/extract}
   upload-dir: ${UPLOAD_DIR:./data/uploads}
   admin-password: ${APP_ADMIN_PASSWORD:}
   user-password: ${APP_USER_PASSWORD:}

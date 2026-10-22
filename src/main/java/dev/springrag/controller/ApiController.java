@@ -14,6 +14,7 @@ import dev.springrag.dto.QuestionRequest;
 import dev.springrag.dto.SearchResultDto;
 import dev.springrag.service.ChatService;
 import dev.springrag.service.KnowledgeService;
+import dev.springrag.service.OcrClient;
 import dev.springrag.service.RetrievalService;
 import dev.springrag.service.Reranker;
 import dev.springrag.service.SiteCrawler;
@@ -101,5 +102,10 @@ public class ApiController {
     public ResponseEntity<ErrorDto> rerankerUnavailable() {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
             .body(new ErrorDto("리랭커를 사용할 수 없습니다."));
+    }
+    @ExceptionHandler(OcrClient.OcrUnavailableException.class)
+    public ResponseEntity<ErrorDto> ocrUnavailable() {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+            .body(new ErrorDto("OCR을 사용할 수 없습니다."));
     }
 }

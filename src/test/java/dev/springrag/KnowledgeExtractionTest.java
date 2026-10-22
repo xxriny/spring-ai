@@ -2,6 +2,10 @@ package dev.springrag;
 
 import dev.springrag.dao.KnowledgeDao;
 import dev.springrag.service.KnowledgeService;
+import dev.springrag.service.OcrClient;
+import dev.springrag.service.PdfExtractionClient;
+import dev.springrag.dto.PdfPageDto;
+import dev.springrag.dto.PdfTableRowDto;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -13,6 +17,8 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import java.io.ByteArrayOutputStream;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -24,6 +30,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.ai.document.Document;
+import org.springframework.ai.tokenizer.JTokkitTokenCountEstimator;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -34,6 +41,97 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 class KnowledgeExtractionTest {
     @TempDir Path tempDir;
+
+    @Test void pdfIndexesBodyAndTableRowSeparately() throws Exception {
+        List<Document> added = new ArrayList<>();
+        var repository = new KnowledgeDao(new JdbcTemplate()) {
+            @Override public void save(UUID id, boolean existing, String scope, String owner, String title, String url,
+                                String path, String hash, String category, List<String> chunkIds) {}
+        };
+        PdfExtractionClient pdf = bytes -> List.of(new PdfPageDto(2, "본문 근거", false,
+            List.of(new PdfTableRowDto(1, 1, List.of("직무", "근무지"), List.of("개발", "서울"),
+                "| 직무 | 근무지 |\n| --- | --- |\n| 개발 | 서울 |", "COMPLETE"))));
+        var service = new KnowledgeService(repository, vectors(added, new ArrayList<>()), transaction(),
+            tempDir.toString(), image -> { throw new AssertionError("OCR must not run"); }, pdf);
+
+        service.upload(new MockMultipartFile("file", "roles.pdf", "application/pdf", new byte[] {1}), "채용", "alice", false);
+
+        assertEquals(2, added.size(), added.toString());
+        assertEquals("BODY", added.get(0).getMetadata().get("contentType"));
+        assertEquals("TABLE_ROW", added.get(1).getMetadata().get("contentType"));
+        assertEquals(2, added.get(1).getMetadata().get("page_number"));
+        assertEquals(1, added.get(1).getMetadata().get("tableIndex"));
+        assertEquals(1, added.get(1).getMetadata().get("rowIndex"));
+        assertEquals("COMPLETE", added.get(1).getMetadata().get("tableExtractionStatus"));
+        assertTrue(added.get(1).getText().contains("| 개발 | 서울 |"));
+        assertFalse(added.get(0).getText().contains("개발"));
+    }
+
+    @Test void longPdfTableRowStaysWithinTokenLimit() throws Exception {
+        List<Document> added = new ArrayList<>();
+        var repository = new KnowledgeDao(new JdbcTemplate()) {
+            @Override public void save(UUID id, boolean existing, String scope, String owner, String title, String url,
+                                String path, String hash, String category, List<String> chunkIds) {}
+        };
+        String cell = IntStream.range(0, 1500).mapToObj(i -> "term" + i).collect(Collectors.joining(" "));
+        String markdown = "| description |\n| --- |\n| " + cell + " |";
+        PdfExtractionClient pdf = bytes -> List.of(new PdfPageDto(1, "", false,
+            List.of(new PdfTableRowDto(1, 1, List.of("description"), List.of(cell), markdown, "COMPLETE"))));
+        var service = new KnowledgeService(repository, vectors(added, new ArrayList<>()), transaction(),
+            tempDir.toString(), image -> { throw new AssertionError("OCR must not run"); }, pdf);
+
+        service.upload(new MockMultipartFile("file", "table.pdf", "application/pdf", new byte[] {1}), "Guide", "alice", false);
+
+        assertTrue(added.size() > 1);
+        var counter = new JTokkitTokenCountEstimator();
+        assertTrue(added.stream().allMatch(chunk -> counter.estimate(chunk.getText()) <= 800));
+        assertTrue(added.stream().allMatch(chunk -> "TABLE_ROW".equals(chunk.getMetadata().get("contentType"))));
+        assertTrue(added.stream().allMatch(chunk -> chunk.getText().startsWith("페이지 1 · 표 1 · 행 1\n| 항목 | 내용 |")));
+        assertTrue(added.stream().allMatch(chunk -> chunk.getText().contains("| description |")));
+    }
+
+    @Test void pdfExtractionFailureKeepsExistingIndex() {
+        List<Document> added = new ArrayList<>();
+        UUID oldId = UUID.randomUUID();
+        var repository = new KnowledgeDao(new JdbcTemplate()) {
+            @Override public Existing findUrl(String scope, String url) { return new Existing(oldId, "old-hash", "Guide"); }
+            @Override public void save(UUID id, boolean existing, String scope, String owner, String title, String url,
+                                String path, String hash, String category, List<String> chunkIds) {
+                throw new AssertionError("catalogue must remain untouched");
+            }
+        };
+        PdfExtractionClient pdf = bytes -> { throw new PdfExtractionClient.PdfExtractionUnavailableException("unavailable", null); };
+        var service = new KnowledgeService(repository, vectors(added, new ArrayList<>()), transaction(),
+            tempDir.toString(), image -> { throw new AssertionError("OCR must not run"); }, pdf);
+
+        assertThrows(PdfExtractionClient.PdfExtractionUnavailableException.class,
+            () -> service.ingestUrl(new byte[] {1}, "old.pdf", "https://docs.example.org/old.pdf", "Guide"));
+        assertTrue(added.isEmpty());
+    }
+
+    @Test void longTextChunksOverlapWithoutExceedingTokenBudget() {
+        List<Document> added = new ArrayList<>();
+        var repository = new KnowledgeDao(new JdbcTemplate()) {
+            @Override public Existing findUrl(String scope, String url) { return null; }
+            @Override public void save(UUID id, boolean existing, String scope, String owner, String title, String url,
+                                String path, String hash, String category, List<String> chunkIds) {}
+        };
+        var service = new KnowledgeService(repository, vectors(added, new ArrayList<>()), transaction(), tempDir.toString());
+        String body = IntStream.range(0, 900).mapToObj(i -> "term" + i).collect(Collectors.joining(" "));
+
+        service.ingestUrl(body.getBytes(java.nio.charset.StandardCharsets.UTF_8), "terms.txt", "https://docs.example.org/terms.txt", "Guide");
+
+        assertTrue(added.size() >= 2);
+        var tokens = new JTokkitTokenCountEstimator();
+        assertTrue(added.stream().allMatch(chunk -> tokens.estimate(chunk.getText()) <= 800));
+        String first = added.get(0).getText();
+        String second = added.get(1).getText();
+        int sharedLength = IntStream.range(0, first.length())
+            .filter(i -> second.startsWith(first.substring(i)))
+            .map(i -> first.length() - i)
+            .max().orElse(0);
+        assertTrue(tokens.estimate(first.substring(first.length() - sharedLength)) >= 90);
+    }
 
     @Test void htmlDropsNavigationAndKeepsSectionAndOrder() throws Exception {
         List<Document> added = new ArrayList<>();
@@ -122,7 +220,9 @@ class KnowledgeExtractionTest {
             @Override public void save(UUID id, boolean existing, String scope, String owner, String title, String url,
                                 String path, String hash, String category, List<String> chunkIds) {}
         };
-        var service = new KnowledgeService(repository, vectors(added, new ArrayList<>()), transaction(), tempDir.toString());
+        var service = new KnowledgeService(repository, vectors(added, new ArrayList<>()), transaction(), tempDir.toString(),
+            image -> { throw new AssertionError("OCR must not run"); },
+            bytes -> List.of(new PdfPageDto(1, "PDF source evidence", false, List.of())));
         byte[] pdf;
         try (var document = new PDDocument(); var output = new ByteArrayOutputStream()) {
             var page = new PDPage();
@@ -151,6 +251,66 @@ class KnowledgeExtractionTest {
         service.upload(new MockMultipartFile("file", "source.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", docx),
             "Guide", "alice", false);
         assertTrue(added.stream().anyMatch(doc -> doc.getText().contains("Word source evidence")));
+    }
+
+    @Test void scannedPdfPageUsesOcrWithoutReprocessingTextPage() throws Exception {
+        List<Document> added = new ArrayList<>();
+        List<byte[]> ocrImages = new ArrayList<>();
+        var repository = new KnowledgeDao(new JdbcTemplate()) {
+            @Override public void save(UUID id, boolean existing, String scope, String owner, String title, String url,
+                                String path, String hash, String category, List<String> chunkIds) {}
+        };
+        OcrClient ocr = image -> { ocrImages.add(image); return "스캔된 문서 근거"; };
+        var service = new KnowledgeService(repository, vectors(added, new ArrayList<>()), transaction(), tempDir.toString(), ocr,
+            bytes -> List.of(new PdfPageDto(1, "Native PDF evidence", false, List.of()),
+                new PdfPageDto(2, "", true, List.of())));
+        byte[] pdf;
+        try (var document = new PDDocument(); var output = new ByteArrayOutputStream()) {
+            var textPage = new PDPage();
+            document.addPage(textPage);
+            try (var content = new PDPageContentStream(document, textPage)) {
+                content.beginText();
+                content.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 12);
+                content.newLineAtOffset(40, 700);
+                content.showText("Native PDF evidence");
+                content.endText();
+            }
+            document.addPage(new PDPage());
+            document.save(output);
+            pdf = output.toByteArray();
+        }
+
+        service.upload(new MockMultipartFile("file", "mixed.pdf", "application/pdf", pdf), "Guide", "alice", false);
+
+        assertEquals(1, ocrImages.size());
+        assertTrue(ocrImages.get(0).length > 0);
+        assertTrue(added.stream().anyMatch(doc -> doc.getText().contains("Native PDF evidence")));
+        assertTrue(added.stream().anyMatch(doc -> doc.getText().contains("스캔된 문서 근거")
+            && Integer.valueOf(2).equals(doc.getMetadata().get("page_number"))));
+    }
+
+    @Test void ocrFailureLeavesExistingUrlIndexUntouched() throws Exception {
+        List<Document> added = new ArrayList<>();
+        UUID oldId = UUID.randomUUID();
+        var repository = new KnowledgeDao(new JdbcTemplate()) {
+            @Override public Existing findUrl(String scope, String url) { return new Existing(oldId, "old-hash", "Guide"); }
+            @Override public void save(UUID id, boolean existing, String scope, String owner, String title, String url,
+                                String path, String hash, String category, List<String> chunkIds) {
+                throw new AssertionError("catalogue must remain untouched");
+            }
+        };
+        var service = new KnowledgeService(repository, vectors(added, new ArrayList<>()), transaction(), tempDir.toString(),
+            image -> { throw new IllegalStateException("OCR unavailable"); },
+            bytes -> List.of(new PdfPageDto(1, "", true, List.of())));
+        byte[] pdf;
+        try (var document = new PDDocument(); var output = new ByteArrayOutputStream()) {
+            document.addPage(new PDPage());
+            document.save(output);
+            pdf = output.toByteArray();
+        }
+
+        assertThrows(IllegalStateException.class, () -> service.ingestUrl(pdf, "scan.pdf", "https://docs.example.org/scan.pdf", "Guide"));
+        assertTrue(added.isEmpty());
     }
 
     private static VectorStore vectors(List<Document> added, List<List<String>> deleted) {

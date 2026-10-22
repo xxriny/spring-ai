@@ -9,6 +9,7 @@
 | PostgreSQL/pgvector | Docker Compose `db`, 호스트 `localhost:5432` | 문서 목록, 청크 ID, 벡터, 대화·채팅 메모리 |
 | Spring Boot | `localhost:8080` | 인증, ETL, 검색·리랭킹 API |
 | Qwen 리랭커 | `127.0.0.1:8091` | 검색 후보 1~10개에 대한 로컬 재정렬 |
+| PDF 추출·PaddleOCR | `127.0.0.1:8092` | pdfplumber 본문·표 추출, 텍스트 없는 페이지의 한국어 OCR |
 | React/Vite | `localhost:5173` | 로그인, 문서 등록, 대화 화면 |
 | 파일 원본 | `UPLOAD_DIR`, 기본 `./data/uploads` | 업로드한 원본 파일 |
 | 평가 원시 결과 | `evaluation/results/<UTC>/` | 수집·검색 응답과 지표; Git에서 제외됨 |
@@ -18,7 +19,7 @@ Spring AI `text-embedding-3-small`은 문서 적재뿐 아니라 **검색 질문
 ## 기동 전 확인
 
 1. Java 17+, Maven, Node.js 20+, Python, Docker를 준비한다. Docker가 실행 중인지 `docker info`로 확인한다.
-2. `5432`, `8080`, `8091`, `5173` 포트의 기존 사용 여부를 확인한다. 이미 실행 중인 이 프로젝트 프로세스가 있으면 중복 실행하지 않는다.
+2. `5432`, `8080`, `8091`, `8092`, `5173` 포트의 기존 사용 여부를 확인한다. 이미 실행 중인 이 프로젝트 프로세스가 있으면 중복 실행하지 않는다.
 3. 관리자·사용자 비밀번호와 OpenAI API 키를 준비한다. 실제 값을 저장소에 커밋하거나 명령줄 인수에 넣지 않는다.
 4. 기존 DB를 재사용한다면 `compose.yaml`의 `pgdata` 볼륨과 `UPLOAD_DIR`이 기대한 데이터인지 확인한다. `docker compose down -v`는 볼륨을 삭제하므로 사용하지 않는다.
 
@@ -31,6 +32,8 @@ Spring AI `text-embedding-3-small`은 문서 적재뿐 아니라 **검색 질문
 | `DATABASE_USER` / `DATABASE_PASSWORD` | `springrag` / `springrag` | DB 계정 |
 | `UPLOAD_DIR` | `./data/uploads` | 업로드 원본 위치 |
 | `RERANKER_URL` | `http://127.0.0.1:8091/rerank` | Spring Boot에서 호출할 로컬 리랭커 |
+| `OCR_URL` | `http://127.0.0.1:8092/ocr` | 스캔 PDF 페이지에 사용할 로컬 OCR |
+| `PDF_EXTRACTION_URL` | `http://127.0.0.1:8092/pdf/extract` | 모든 PDF 등록 시 호출하는 로컬 추출 서버 |
 
 ## 시작 순서
 
@@ -57,7 +60,20 @@ python reranker/server.py
 
 모델 로드가 끝나면 서버가 `127.0.0.1:8091`에 바인딩된다. 다른 터미널의 `nc -z 127.0.0.1 8091`은 포트 접속만 확인한다. 실제 추론 품질이나 점수는 이 확인만으로 검증되지 않는다. 모델 파일은 저장소에 넣지 않는다.
 
-### 3. Spring Boot와 화면
+### 3. 로컬 PDF 추출·OCR
+
+모든 PDF를 등록할 때 필요하다. pdfplumber가 텍스트 PDF의 반복 머리말·꼬리말과 표 행을 처리하고, 스캔 페이지만 OCR을 호출한다. [PaddleOCR 설치 안내](https://www.paddleocr.ai/main/en/version3.x/installation.html)에 맞는 Python·PaddlePaddle 환경을 준비하고, 별도 터미널에서 실행한다. 첫 시작에는 한국어 PP-OCRv5 모델을 다운로드하므로 용량과 저장 공간을 먼저 확인한다.
+
+```bash
+python3 -m venv .venv-ocr
+source .venv-ocr/bin/activate
+python -m pip install -r ocr/requirements.txt
+python ocr/server.py
+```
+
+서버는 `127.0.0.1:8092`에만 바인딩한다. `nc -z 127.0.0.1 8092`는 포트 접속만 확인하며 PDF 추출·한글 인식 품질을 보증하지 않는다. PDF 추출 요청은 `application/pdf` 원본 바이트로 `/pdf/extract`에 전달되며 20MB를 초과하면 거부된다. 추출 실패 시 업로드는 오류로 끝나고, URL 재수집은 기존 색인을 유지한다. 표 구조를 감지하지 못하면 페이지 본문으로 색인한다. 기존 PDF에 변경을 적용하려면 해당 문서를 삭제한 뒤 재등록한다. 이 작업은 OpenAI 임베딩 비용을 발생시킨다.
+
+### 4. Spring Boot와 화면
 
 백엔드 터미널에서 환경 변수를 설정하고 시작한다. 예를 들어 Git에서 제외된 `.env`에 `APP_ADMIN_PASSWORD`, `APP_USER_PASSWORD`, `OPENAI_API_KEY`를 각 한 줄씩 `이름=값` 형식으로 저장한다. 파일 권한을 제한하고, 실제 값을 터미널 명령에 직접 입력하지 않는다.
 
@@ -94,6 +110,7 @@ docker compose exec -T db psql -U springrag -d springrag -c 'SELECT count(*) FRO
 ## 문서 등록과 검색
 
 아래 요청은 실제 OpenAI 임베딩 호출을 일으킬 수 있다. 실행 전에 대상 파일·페이지 수, 예상 청크/호출 수, 현재 단가와 비용 상한, 중단 조건을 확인하고 승인을 받는다. URL의 `maxPages=1`은 한 페이지만 수집하지만 페이지당 청크 수·임베딩 호출 수를 고정하지는 않는다.
+새 색인은 청크당 최대 800토큰, 같은 PDF 페이지 또는 HTML 섹션 내 인접 청크 간 최대 100토큰 오버랩을 사용한다. 기존 색인은 자동 변경되지 않으므로 적용 대상 문서를 삭제한 뒤 다시 등록한다. 동일 내용의 URL을 단순 재수집하면 건너뛰므로 먼저 삭제해야 한다.
 
 ```bash
 # 관리자: 공용 파일 등록
@@ -127,7 +144,7 @@ python3 -m unittest discover -s evaluation -p 'test_*.py'
 
 ## 종료와 백업
 
-화면·백엔드·리랭커는 각 실행 터미널에서 정상 종료한다. DB만 중지할 때는 `docker compose stop db`를 사용한다. `docker compose down`은 컨테이너를 내리지만 명명 볼륨은 유지한다. **`down -v`는 사용하지 않는다.**
+화면·백엔드·리랭커·OCR은 각 실행 터미널에서 정상 종료한다. DB만 중지할 때는 `docker compose stop db`를 사용한다. `docker compose down`은 컨테이너를 내리지만 명명 볼륨은 유지한다. **`down -v`는 사용하지 않는다.**
 
 백업 중 문서 등록·삭제·재수집을 중단한다. PostgreSQL 덤프와 `UPLOAD_DIR` 원본을 같은 백업 세트로 보관하고, 평가 원시 결과가 필요하면 `evaluation/results/`도 따로 보관한다. 기본 업로드 경로를 사용하는 경우의 예시는 다음과 같다.
 
@@ -150,6 +167,7 @@ docker compose exec -T db pg_restore --list < "$BACKUP_DIR/springrag.dump" | hea
 | 관리자 수집 403 | 로그인 계정 | `/api/admin/crawl`은 `admin`만 호출 가능 |
 | 등록·검색 400 | 카테고리 1~80자, 지원 파일 형식·20MB 제한, 질문 1~4000자, 범위 | 요청 값을 수정하고 재시도. 실패 URL은 `errors` 확인 |
 | 검색 503, 리랭커 오류 | Qwen 프로세스 로그, `8091` 포트, `RERANKER_URL` | 리랭커를 기동/복구한 뒤 같은 질문 재시도. 후보가 없으면 리랭커를 호출하지 않음 |
+| PDF 등록 오류 또는 URL 수집 `errors`에 추출·OCR 오류 | PDF 추출·PaddleOCR 프로세스 로그, `8092` 포트, `PDF_EXTRACTION_URL`, `OCR_URL` | 서버와 의존성을 복구한 뒤 재시도. 실패한 URL 재수집은 기존 색인을 유지함 |
 | 대화 질문 503, 생성 모델 미설정 | `spring.ai.model.chat` | 현재 첫 버전의 예상 동작. 독립 `/api/search`로 검색 경로 확인 |
 | 색인·검색 중 OpenAI/DB 오류 | 백엔드 로그, API 키·DB 상태, 호출 한도 | 원인 복구 후 재시도. 변경 URL 재수집 실패 시 기존 카탈로그·청크가 유지되도록 구현됨. 조회로 확인 |
 | 수집 `indexed=0` 또는 `errors` 발생 | URL별 HTTP 상태, 경로 범위, 리다이렉트, 파일 형식 | 오류 URL만 재시도. 동일 URL·동일 내용은 중복 색인하지 않음 |
