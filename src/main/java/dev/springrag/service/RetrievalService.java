@@ -27,8 +27,12 @@ public class RetrievalService {
         if ("PRIVATE".equals(scope) && (owner == null || !owner.matches("[A-Za-z0-9._-]{1,100}")))
             throw new IllegalArgumentException("사용자 ID가 올바르지 않습니다");
         String filter = "PRIVATE".equals(scope) ? "scope == 'PRIVATE' && ownerId == '" + owner + "'" : "scope == 'SHARED'";
-        var docs = vectors.similaritySearch(SearchRequest.builder().query(question.trim()).topK(10)
-            .similarityThreshold(0.3).filterExpression(filter).build());
+        var docs = vectors.similaritySearch(SearchRequest.builder()
+                .query(question.trim())
+                .topK(10)
+                .similarityThreshold(0.3)
+                .filterExpression(filter)
+                .build());
         List<SearchHitDto> candidates = new ArrayList<>();
         for (int i = 0; i < docs.size(); i++) candidates.add(hit(docs.get(i), i + 1, null));
         if (docs.isEmpty()) return new SearchResultDto(candidates, List.of());
