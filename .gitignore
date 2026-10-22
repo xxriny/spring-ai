@@ -1,5 +1,6 @@
 .m2/
 .venv/
+.venv-ocr/
 target/
 frontend/node_modules/
 frontend/dist/
