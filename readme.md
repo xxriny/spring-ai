@@ -2,6 +2,8 @@
 
 로컬 기동·점검·백업·장애 대응 절차는 [운영 런북](runbooks/SpringRagLocalV0_1_0.md)을 참고하세요.
 
+로컬 DB·OCR·리랭커 파일은 [인프라 디렉터리](infrastructure/README.md)에 있습니다. 배치 이유와 볼륨 보존 결정은 [ADR 0002](docs/adr/0002-infrastructure-directory.md), 검색 품질 변경 기준은 [ADR 0001](docs/adr/0001-measure-retrieval-before-tuning.md)에 기록했습니다.
+
 Spring Boot 4 + Spring AI 2.0.1 백엔드, React + Vite 화면, PostgreSQL/pgvector/pg_search로 구성한 문서 기반 챗봇입니다. 화면은 딥블루 색상, 대화 목록, 본문, 참고 자료 패널로 구성했습니다.
 
 ## 현재 범위
