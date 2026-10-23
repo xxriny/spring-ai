@@ -1,3 +1,5 @@
+name: springai
+
 services:
   db:
     image: paradedb/paradedb:0.26.0-pg17

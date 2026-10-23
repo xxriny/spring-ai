@@ -1,5 +1,7 @@
 # PDF 머리말·꼬리말 및 표 추출 Implementation Plan
 
+> 경로 참고: 이 계획 작성 후 Python OCR 서비스와 fixture는 `ocr/`에서 `infrastructure/ocr/`로 이동했다. 아래 당시 경로는 현재 위치로 치환해 읽는다.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 텍스트 PDF에서 반복 머리말·꼬리말을 제거하고 표 행을 Markdown 청크로 분리해 색인한다.

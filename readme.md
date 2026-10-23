@@ -19,7 +19,7 @@ Spring Boot 4 + Spring AI 2.0.1 백엔드, React + Vite 화면, PostgreSQL/pgvec
 Java 17+, Maven, Node 20+, Docker, Ollama가 필요합니다. 문서 적재와 검색은 로컬 Qwen3 임베딩을 사용하므로 OpenAI API 키가 필요하지 않습니다. `ollama pull qwen3-embedding:8b`로 모델을 받은 뒤 Ollama 서버를 실행하세요. 생성용 채팅 모델은 아직 결정되지 않아 **대화 질문 요청은 503**을 반환합니다. 독립 검색 API는 생성 모델 없이 사용할 수 있지만, 결과가 있을 때 로컬 Qwen 리랭커가 실행 중이어야 합니다. 모든 PDF 등록에는 로컬 PDF 추출 서버가 필요하며, 스캔 페이지에는 같은 서버의 OCR 경로도 사용합니다. 생성 모델을 고를 때 해당 Spring AI 모델 스타터와 설정을 추가하세요.
 
 ```bash
-docker compose up -d db
+docker compose -f infrastructure/compose.yaml up -d db
 export APP_ADMIN_PASSWORD='change-this-admin-password'
 export APP_USER_PASSWORD='change-this-user-password'
 mvn spring-boot:run
@@ -37,11 +37,11 @@ npm run dev
 
 ### 로컬 리랭커
 
-Python 환경에 `pip install -r reranker/requirements.txt`로 의존성을 설치하고 `python reranker/server.py`로 실행합니다. 서버는 `127.0.0.1:8091`에만 바인딩하고 시작할 때 [Qwen 모델](https://huggingface.co/Qwen/Qwen3-Reranker-0.6B)을 내려받아 로드합니다. 첫 실행 전에 모델 다운로드 용량, 사용 가능한 메모리와 CPU/GPU를 확인하세요. 다른 주소를 사용할 때 `RERANKER_URL`을 설정합니다. Qwen의 원시 점수는 확률이 아니며 0.3 기준은 pgvector 후보 검색에만 적용됩니다.
+Python 환경에 `pip install -r infrastructure/reranker/requirements.txt`로 의존성을 설치하고 `python infrastructure/reranker/server.py`로 실행합니다. 서버는 `127.0.0.1:8091`에만 바인딩하고 시작할 때 [Qwen 모델](https://huggingface.co/Qwen/Qwen3-Reranker-0.6B)을 내려받아 로드합니다. 첫 실행 전에 모델 다운로드 용량, 사용 가능한 메모리와 CPU/GPU를 확인하세요. 다른 주소를 사용할 때 `RERANKER_URL`을 설정합니다. Qwen의 원시 점수는 확률이 아니며 0.3 기준은 pgvector 후보 검색에만 적용됩니다.
 
 ### 로컬 PDF 추출·OCR
 
-별도 Python 환경에 `pip install -r ocr/requirements.txt`로 pdfplumber·PaddleOCR 의존성을 설치하고 `python ocr/server.py`로 실행합니다. 서버는 `127.0.0.1:8092`에만 바인딩하며 한국어 PP-OCRv5 모델을 첫 시작에 다운로드합니다. 설치 전에 [PaddleOCR 설치 안내](https://www.paddleocr.ai/main/en/version3.x/installation.html)에서 운영체제와 Python 버전에 맞는 PaddlePaddle 런타임을 확인하세요. 다른 주소를 사용할 때 `PDF_EXTRACTION_URL`(`/pdf/extract`)과 `OCR_URL`(`/ocr`)을 설정합니다. 일반 텍스트 PDF는 OCR을 호출하지 않지만 PDF 추출 서버가 필요합니다. 추출·OCR이 실패하면 등록은 실패하며 기존 URL 문서의 색인은 유지됩니다.
+별도 Python 환경에 `pip install -r infrastructure/ocr/requirements.txt`로 pdfplumber·PaddleOCR 의존성을 설치하고 `python infrastructure/ocr/server.py`로 실행합니다. 서버는 `127.0.0.1:8092`에만 바인딩하며 한국어 PP-OCRv5 모델을 첫 시작에 다운로드합니다. 설치 전에 [PaddleOCR 설치 안내](https://www.paddleocr.ai/main/en/version3.x/installation.html)에서 운영체제와 Python 버전에 맞는 PaddlePaddle 런타임을 확인하세요. 다른 주소를 사용할 때 `PDF_EXTRACTION_URL`(`/pdf/extract`)과 `OCR_URL`(`/ocr`)을 설정합니다. 일반 텍스트 PDF는 OCR을 호출하지 않지만 PDF 추출 서버가 필요합니다. 추출·OCR이 실패하면 등록은 실패하며 기존 URL 문서의 색인은 유지됩니다.
 
 ## API
 
@@ -89,8 +89,8 @@ service/PdfExtractionClient ← infrastructure/LocalPdfExtractionClient(로컬 P
 mvn test
 docker info && mvn -Dtest=PgvectorSearchIT,JdbcRetrievalDaoIT test
 cd frontend && npm run build
-cd .. && python3 -m unittest discover -s reranker -p 'test_*.py'
-python3 -m unittest discover -s ocr -p 'test_*.py'
+cd .. && python3 -m unittest discover -s infrastructure/reranker -p 'test_*.py'
+.venv-ocr/bin/python -m unittest discover -s infrastructure/ocr -p 'test_*.py'
 python3 -m unittest discover -s evaluation -p 'test_*.py'
 python3 evaluation/evaluate.py
 ```

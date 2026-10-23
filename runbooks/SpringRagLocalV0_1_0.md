@@ -22,7 +22,9 @@
 1. Java 17+, Maven, Node.js 20+, Python, Docker를 준비한다. Docker가 실행 중인지 `docker info`로 확인한다.
 2. `5432`, `8080`, `8091`, `8092`, `11434`, `5173` 포트의 기존 사용 여부를 확인한다. 이미 실행 중인 이 프로젝트 프로세스가 있으면 중복 실행하지 않는다.
 3. 관리자·사용자 비밀번호를 준비한다. 실제 값을 저장소에 커밋하거나 명령줄 인수에 넣지 않는다.
-4. 기존 DB를 재사용한다면 `compose.yaml`의 `pgdata` 볼륨과 `UPLOAD_DIR`이 기대한 데이터인지 확인한다. `docker compose down -v`는 볼륨을 삭제하므로 사용하지 않는다.
+4. 기존 DB를 재사용한다면 `infrastructure/compose.yaml`의 `pgdata` 볼륨과 `UPLOAD_DIR`이 기대한 데이터인지 확인한다. `docker compose -f infrastructure/compose.yaml down -v`는 볼륨을 삭제하므로 사용하지 않는다.
+
+Compose 파일을 `infrastructure/`로 옮겨도 프로젝트명은 `springai`로 고정되어 기존 `springai_pgdata` 볼륨을 참조한다. 모든 Compose 명령은 저장소 루트에서 실행한다. Docker 엔진이 없는 환경에서는 볼륨의 실제 연결 상태까지 확인할 수 없으므로, 기동 전에 `docker compose -f infrastructure/compose.yaml config`와 기존 볼륨을 확인한다.
 
 ### 기존 pgvector 이미지에서 ParadeDB로 전환
 
@@ -32,27 +34,27 @@
 umask 077
 BACKUP_DIR=/secure/backup
 mkdir -p "$BACKUP_DIR"
-docker compose exec -T db pg_dump -U springrag -d springrag -Fc > "$BACKUP_DIR/springrag-before-paradedb.dump"
+docker compose -f infrastructure/compose.yaml exec -T db pg_dump -U springrag -d springrag -Fc > "$BACKUP_DIR/springrag-before-paradedb.dump"
 tar -C data -czf "$BACKUP_DIR/uploads-before-paradedb.tgz" uploads
-docker compose exec -T db pg_restore --list < "$BACKUP_DIR/springrag-before-paradedb.dump" | head
+docker compose -f infrastructure/compose.yaml exec -T db pg_restore --list < "$BACKUP_DIR/springrag-before-paradedb.dump" | head
 ```
 
-별도 ParadeDB `0.26.0-pg17` 인스턴스에 덤프를 복원하고 `knowledge_document`, `knowledge_chunk`, `vector_store` 건수와 샘플 데이터를 원본과 비교한다. 기존 DB를 복원 대상으로 쓰지 않는다. 검증이 끝난 뒤 DB를 중지하고 `compose.yaml`의 이미지를 `paradedb/paradedb:0.26.0-pg17`로 바꿔 **같은 `pgdata` 볼륨**으로 재기동한다. PostgreSQL 메이저 버전은 17로 유지한다. 볼륨을 지우거나 새 DB로 초기화하지 않는다. 이미지 교체 후 collation 버전 경고가 있으면 다음 명령을 백업 상태에서 수행한다.
+별도 ParadeDB `0.26.0-pg17` 인스턴스에 덤프를 복원하고 `knowledge_document`, `knowledge_chunk`, `vector_store` 건수와 샘플 데이터를 원본과 비교한다. 기존 DB를 복원 대상으로 쓰지 않는다. 검증이 끝난 뒤 DB를 중지하고 `infrastructure/compose.yaml`의 이미지를 `paradedb/paradedb:0.26.0-pg17`로 바꿔 **같은 `pgdata` 볼륨**으로 재기동한다. PostgreSQL 메이저 버전은 17로 유지한다. 볼륨을 지우거나 새 DB로 초기화하지 않는다. 이미지 교체 후 collation 버전 경고가 있으면 다음 명령을 백업 상태에서 수행한다.
 
 ```bash
-docker compose up -d db
-docker compose exec -T db psql -U springrag -d springrag -c 'REINDEX DATABASE springrag;'
-docker compose exec -T db psql -U springrag -d springrag -c 'ALTER DATABASE springrag REFRESH COLLATION VERSION;'
+docker compose -f infrastructure/compose.yaml up -d db
+docker compose -f infrastructure/compose.yaml exec -T db psql -U springrag -d springrag -c 'REINDEX DATABASE springrag;'
+docker compose -f infrastructure/compose.yaml exec -T db psql -U springrag -d springrag -c 'ALTER DATABASE springrag REFRESH COLLATION VERSION;'
 ```
 
-`compose.yaml`은 기존 볼륨의 설정과 관계없이 `shared_preload_libraries=pg_search`로 PostgreSQL을 시작한다. 이 설정이 빠지면 `CREATE EXTENSION pg_search`가 실패한다. 백엔드가 시작되면 `pg_search` 확장과 `vector_store_bm25_idx`가 기존 `vector_store` 행까지 색인한다. 아래 조회로 preload·확장·인덱스·건수를 확인한다. 실패하면 앱과 DB를 중지하고 백업과 원본 업로드 파일을 검증된 복원 절차로 되돌린다. 덤프만 복원하거나 `stored_path`가 가리키는 파일을 누락하면 안 된다.
+`infrastructure/compose.yaml`은 기존 볼륨의 설정과 관계없이 `shared_preload_libraries=pg_search`로 PostgreSQL을 시작한다. 이 설정이 빠지면 `CREATE EXTENSION pg_search`가 실패한다. 백엔드가 시작되면 `pg_search` 확장과 `vector_store_bm25_idx`가 기존 `vector_store` 행까지 색인한다. 아래 조회로 preload·확장·인덱스·건수를 확인한다. 실패하면 앱과 DB를 중지하고 백업과 원본 업로드 파일을 검증된 복원 절차로 되돌린다. 덤프만 복원하거나 `stored_path`가 가리키는 파일을 누락하면 안 된다.
 
 ```bash
-docker compose exec -T db psql -U springrag -d springrag -c 'SELECT version();'
-docker compose exec -T db psql -U springrag -d springrag -c 'SHOW shared_preload_libraries;'
-docker compose exec -T db psql -U springrag -d springrag -c "SELECT extname FROM pg_extension WHERE extname IN ('vector','pg_search');"
-docker compose exec -T db psql -U springrag -d springrag -c "SELECT indexname FROM pg_indexes WHERE tablename='vector_store' AND indexname='vector_store_bm25_idx';"
-docker compose exec -T db psql -U springrag -d springrag -c 'SELECT count(*) FROM vector_store;'
+docker compose -f infrastructure/compose.yaml exec -T db psql -U springrag -d springrag -c 'SELECT version();'
+docker compose -f infrastructure/compose.yaml exec -T db psql -U springrag -d springrag -c 'SHOW shared_preload_libraries;'
+docker compose -f infrastructure/compose.yaml exec -T db psql -U springrag -d springrag -c "SELECT extname FROM pg_extension WHERE extname IN ('vector','pg_search');"
+docker compose -f infrastructure/compose.yaml exec -T db psql -U springrag -d springrag -c "SELECT indexname FROM pg_indexes WHERE tablename='vector_store' AND indexname='vector_store_bm25_idx';"
+docker compose -f infrastructure/compose.yaml exec -T db psql -U springrag -d springrag -c 'SELECT count(*) FROM vector_store;'
 ```
 
 | 환경 변수 | 기본값 | 설정 목적 |
@@ -72,13 +74,13 @@ docker compose exec -T db psql -U springrag -d springrag -c 'SELECT count(*) FRO
 모델이 달라도 1536차원 수치는 같을 수 있지만 벡터 의미 공간은 다르다. 앱은 `vector_store.metadata.embeddingModel`이 `qwen3-embedding:8b/1536`이 아닌 행이 있으면 시작을 중단한다. 배포 전 아래 읽기 전용 조회로 건수를 확인한다.
 
 ```bash
-docker compose exec -T db psql -U springrag -d springrag -c "SELECT count(*) FROM vector_store WHERE metadata->>'embeddingModel' IS DISTINCT FROM 'qwen3-embedding:8b/1536';"
+docker compose -f infrastructure/compose.yaml exec -T db psql -U springrag -d springrag -c "SELECT count(*) FROM vector_store WHERE metadata->>'embeddingModel' IS DISTINCT FROM 'qwen3-embedding:8b/1536';"
 ```
 
 0건이면 데이터 변경 없이 시작한다. 1건 이상이면 DB 덤프와 `UPLOAD_DIR` 파일을 함께 백업하고 별도 DB에 복원해 검증한다. 아래 조회로 파일·URL, 소유자·범위·카테고리를 보관하고 원본 파일의 존재를 확인한다.
 
 ```bash
-docker compose exec -T db psql -U springrag -d springrag -c 'SELECT id,scope,owner_id,title,category,source_url,stored_path FROM knowledge_document ORDER BY created_at;'
+docker compose -f infrastructure/compose.yaml exec -T db psql -U springrag -d springrag -c 'SELECT id,scope,owner_id,title,category,source_url,stored_path FROM knowledge_document ORDER BY created_at;'
 ```
 
 백업·복원 및 재등록 목록을 확인한 뒤 **앱을 중지한 상태에서만** 다음 트랜잭션을 실행한다. 기존 청크와 카탈로그를 모두 지우며 대화 기록은 보존한다. SQL 오류가 나면 `ROLLBACK`하고 백업을 점검한다.
@@ -97,9 +99,9 @@ COMMIT;
 ### 1. 데이터베이스
 
 ```bash
-docker compose up -d db
-docker compose ps db
-docker compose exec -T db pg_isready -U springrag -d springrag
+docker compose -f infrastructure/compose.yaml up -d db
+docker compose -f infrastructure/compose.yaml ps db
+docker compose -f infrastructure/compose.yaml exec -T db pg_isready -U springrag -d springrag
 ```
 
 `pg_isready`가 연결 가능 상태를 반환한 뒤 다음 단계로 간다. 데이터는 Compose의 `pgdata` 볼륨에 남는다. 기존 DB 전환은 위 백업·복원 확인 후 수행한다.
@@ -122,8 +124,8 @@ Ollama가 자동으로 실행되지 않는 환경에서는 별도 터미널에�
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r reranker/requirements.txt
-python reranker/server.py
+python -m pip install -r infrastructure/reranker/requirements.txt
+python infrastructure/reranker/server.py
 ```
 
 모델 로드가 끝나면 서버가 `127.0.0.1:8091`에 바인딩된다. 다른 터미널의 `nc -z 127.0.0.1 8091`은 포트 접속만 확인한다. 실제 추론 품질이나 점수는 이 확인만으로 검증되지 않는다. 모델 파일은 저장소에 넣지 않는다.
@@ -135,8 +137,8 @@ python reranker/server.py
 ```bash
 python3 -m venv .venv-ocr
 source .venv-ocr/bin/activate
-python -m pip install -r ocr/requirements.txt
-python ocr/server.py
+python -m pip install -r infrastructure/ocr/requirements.txt
+python infrastructure/ocr/server.py
 ```
 
 서버는 `127.0.0.1:8092`에만 바인딩한다. `nc -z 127.0.0.1 8092`는 포트 접속만 확인하며 PDF 추출·한글 인식 품질을 보증하지 않는다. PDF 추출 요청은 `application/pdf` 원본 바이트로 `/pdf/extract`에 전달되며 20MB를 초과하면 거부된다. 추출 실패 시 업로드는 오류로 끝나고, URL 재수집은 기존 색인을 유지한다. 표 구조를 감지하지 못하면 페이지 본문으로 색인한다. 기존 PDF에 변경을 적용하려면 해당 문서를 삭제한 뒤 재등록한다. 이 작업은 로컬 Ollama 추론을 사용한다.
@@ -170,7 +172,7 @@ npm --prefix frontend run dev
 curl -fsS http://127.0.0.1:8080/api/health
 curl -u admin http://127.0.0.1:8080/api/me
 curl -u user 'http://127.0.0.1:8080/api/documents?scope=PRIVATE'
-docker compose exec -T db psql -U springrag -d springrag -c 'SELECT count(*) FROM knowledge_document;'
+docker compose -f infrastructure/compose.yaml exec -T db psql -U springrag -d springrag -c 'SELECT count(*) FROM knowledge_document;'
 ```
 
 `curl -u admin`과 `curl -u user`는 비밀번호를 명령 인수에 쓰지 않으면 입력을 요청한다. `/api/health`의 `{"status":"UP"}`는 **HTTP 핸들러만** 확인한다. DB, Ollama, Qwen 리랭커 준비 상태를 보증하지 않는다. DB는 `pg_isready`와 읽기 전용 조회로, Qwen은 프로세스 로그와 포트로 따로 확인한다.
@@ -212,16 +214,16 @@ python3 -m unittest discover -s evaluation -p 'test_*.py'
 
 ## 종료와 백업
 
-화면·백엔드·리랭커·OCR은 각 실행 터미널에서 정상 종료한다. DB만 중지할 때는 `docker compose stop db`를 사용한다. `docker compose down`은 컨테이너를 내리지만 명명 볼륨은 유지한다. **`down -v`는 사용하지 않는다.**
+화면·백엔드·리랭커·OCR은 각 실행 터미널에서 정상 종료한다. DB만 중지할 때는 `docker compose -f infrastructure/compose.yaml stop db`를 사용한다. `docker compose -f infrastructure/compose.yaml down`은 컨테이너를 내리지만 명명 볼륨은 유지한다. **`down -v`는 사용하지 않는다.**
 
 백업 중 문서 등록·삭제·재수집을 중단한다. PostgreSQL 덤프와 `UPLOAD_DIR` 원본을 같은 백업 세트로 보관하고, 평가 원시 결과가 필요하면 `evaluation/results/`도 따로 보관한다. 기본 업로드 경로를 사용하는 경우의 예시는 다음과 같다.
 
 ```bash
 BACKUP_DIR=/path/to/backups
 mkdir -p "$BACKUP_DIR"
-docker compose exec -T db pg_dump -U springrag -d springrag -Fc > "$BACKUP_DIR/springrag.dump"
+docker compose -f infrastructure/compose.yaml exec -T db pg_dump -U springrag -d springrag -Fc > "$BACKUP_DIR/springrag.dump"
 tar -C data -czf "$BACKUP_DIR/uploads.tgz" uploads
-docker compose exec -T db pg_restore --list < "$BACKUP_DIR/springrag.dump" | head
+docker compose -f infrastructure/compose.yaml exec -T db pg_restore --list < "$BACKUP_DIR/springrag.dump" | head
 ```
 
 복구는 우선 별도 DB/작업 디렉터리에서 덤프를 복원해 문서·청크·벡터 건수와 샘플 검색을 확인한다. 검증 뒤 앱을 중지하고 운영 DB 및 원본 파일의 **같은 경로**를 복원한다. DB의 `stored_path`는 업로드 원본 경로를 참조하므로 `UPLOAD_DIR`만 다른 곳으로 옮기지 않는다. 기존 DB나 볼륨을 바로 덮어쓰는 복원은 이 런북에서 자동 실행하지 않는다.
@@ -230,7 +232,7 @@ docker compose exec -T db pg_restore --list < "$BACKUP_DIR/springrag.dump" | hea
 
 | 증상 | 확인 | 조치 |
 | --- | --- | --- |
-| 백엔드 시작 시 DB 연결 실패 | `docker compose ps db`, `pg_isready`, `DATABASE_*` | DB를 시작하고 접속 정보를 맞춘 뒤 백엔드 재시작 |
+| 백엔드 시작 시 DB 연결 실패 | `docker compose -f infrastructure/compose.yaml ps db`, `pg_isready`, `DATABASE_*` | DB를 시작하고 접속 정보를 맞춘 뒤 백엔드 재시작 |
 | 백엔드 시작 시 기존 임베딩 문서 오류 | `vector_store.metadata.embeddingModel`, 기존 청크 건수 | 위 백업·복원·재색인 절차를 완료한 뒤 시작. 메타데이터만 수정하지 않음 |
 | 로그인 401 | `/api/me`, 계정명·비밀번호 환경 변수 | `admin`/`user` 계정과 비밀번호 재확인. 비밀번호 변경 시 백엔드 재시작 |
 | 관리자 수집 403 | 로그인 계정 | `/api/admin/crawl`은 `admin`만 호출 가능 |
