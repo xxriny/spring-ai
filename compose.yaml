@@ -1,6 +1,7 @@
 services:
   db:
-    image: pgvector/pgvector:pg17
+    image: paradedb/paradedb:0.26.0-pg17
+    command: ["postgres", "-c", "shared_preload_libraries=pg_search"]
     environment:
       POSTGRES_DB: springrag
       POSTGRES_USER: springrag

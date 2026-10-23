@@ -6,8 +6,8 @@
 
 - 백엔드: Java 17, Spring Boot 4.0.0, Spring AI 2.0.1, Spring MVC, Spring Security, Spring JDBC, Spring AI 문서 리더(Tika·JSoup), PDFBox, Python pdfplumber 0.11, Maven.
 - 프런트엔드: React 19, TypeScript 5, Vite 7.
-- 데이터: PostgreSQL 17, pgvector, Spring AI JDBC Chat Memory.
-- AI: OpenAI `text-embedding-3-small`, 로컬 `Qwen/Qwen3-Reranker-0.6B`(Python, sentence-transformers), 로컬 PaddleOCR 한국어 PP-OCRv5. 생성용 채팅 모델은 미정.
+- 데이터: PostgreSQL 17(ParadeDB 0.26.0-pg17), pgvector, pg_search(BM25), Spring AI JDBC Chat Memory.
+- AI: Ollama `qwen3-embedding:8b`(1536차원), 로컬 `Qwen/Qwen3-Reranker-0.6B`(Python, sentence-transformers), 로컬 PaddleOCR 한국어 PP-OCRv5. 생성용 채팅 모델은 미정.
 - 로컬 실행·검증: Docker Compose, JUnit, Testcontainers, Python unittest.
 
 이 목록은 현재 구현의 기록이며 기술 도입을 제한하지 않는다. 새 기술을 추가하거나 버전을 바꾸면 실제 설정과 이 목록을 함께 갱신한다.

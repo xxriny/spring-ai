@@ -58,7 +58,7 @@ public class ChatService {
                 .user(String.join("\n", history) + "\n현재 질문: " + question)
                 .call().content();
         }
-        var hits = retrieval.search(searchText, scope, owner).reranked();
+        var hits = retrieval.search(searchText, scope, owner).passages();
         List<SourceDto> sources = hits.stream().map(doc -> new SourceDto(
             doc.title(), doc.url(), doc.text().length() > 240 ? doc.text().substring(0, 240) + "…" : doc.text(),
             doc.documentId(), doc.page())).toList();

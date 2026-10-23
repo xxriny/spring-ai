@@ -1,6 +1,7 @@
 package dev.springrag.service;
 
 import dev.springrag.dao.KnowledgeDao;
+import dev.springrag.config.LocalEmbeddingConfig;
 import dev.springrag.dto.DocumentDto;
 import dev.springrag.dto.PdfPageDto;
 import dev.springrag.dto.PdfTableRowDto;
@@ -115,6 +116,7 @@ public class KnowledgeService {
             metadata.put("title", title);
             metadata.put("source", sourceUrl == null ? "upload" : sourceUrl);
             metadata.put("category", category);
+            metadata.put("embeddingModel", LocalEmbeddingConfig.EMBEDDING_ID);
             String previous = null;
             List<Document> pageChunks = "TABLE_ROW".equals(metadata.get("contentType"))
                 ? List.of(new Document(page.getText(), metadata))

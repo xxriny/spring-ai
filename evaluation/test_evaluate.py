@@ -38,6 +38,16 @@ class EvaluationTest(unittest.TestCase):
         self.assertEqual(1, report['ko']['n'])
         self.assertEqual(.5, report['all']['candidates']['document']['hit@1'])
 
+    def test_reports_vector_bm25_fusion_rerank_and_final_passage_separately(self):
+        evidence = {'url': self.question['expectedUrl'], 'text': 'first fact'}
+        result = evaluate_case(self.question, {
+            'vectorCandidates': [], 'bm25Candidates': [evidence], 'candidates': [evidence],
+            'reranked': [evidence], 'passages': [evidence]})
+        self.assertIsNone(result['vectorCandidates']['chunkRank'])
+        self.assertEqual(1, result['bm25Candidates']['chunkRank'])
+        self.assertEqual(1, result['passages']['chunkRank'])
+        self.assertEqual(1, summarize([result])['all']['passages']['chunk']['hit@1'])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -14,7 +14,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 class SearchApiTest {
     @Test void searchUsesAuthenticatedOwnerAndRejectsInvalidInput() {
         AtomicReference<String> owner = new AtomicReference<>();
-        var retrieval = new RetrievalService(null, null) {
+        var retrieval = new RetrievalService(null, null, null) {
             @Override public SearchResultDto search(String query, String scope, String principal) {
                 owner.set(principal);
                 return new SearchResultDto(List.of(), List.of());

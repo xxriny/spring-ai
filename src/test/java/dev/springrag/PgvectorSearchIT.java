@@ -1,6 +1,7 @@
 package dev.springrag;
 
 import dev.springrag.dao.KnowledgeDao;
+import dev.springrag.dao.JdbcRetrievalDao;
 import dev.springrag.service.KnowledgeService;
 import dev.springrag.service.RetrievalService;
 
@@ -31,11 +32,46 @@ import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.web.server.servlet.context.ServletWebServerApplicationContext;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.utility.DockerImageName;
 
 class PgvectorSearchIT {
     @TempDir Path tempDir;
+    @Test void bm25RecoversChunkBelowVectorThreshold() {
+        try (var postgres = new PostgreSQLContainer<>(DockerImageName.parse("paradedb/paradedb:0.26.0-pg17")
+                .asCompatibleSubstituteFor("postgres"))) {
+            postgres.start();
+            var db = new JdbcTemplate(new DriverManagerDataSource(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword()));
+            EmbeddingModel model = (EmbeddingModel) Proxy.newProxyInstance(EmbeddingModel.class.getClassLoader(),
+                new Class<?>[] {EmbeddingModel.class}, (proxy, method, args) -> {
+                    if (method.getName().equals("dimensions")) return 1536;
+                    if (method.getName().equals("embed")) {
+                        if (args[0] instanceof List<?> list) return list.stream().map(item ->
+                            axis(item instanceof Document d && d.getText().contains("keyword-only") ? 1 : 0)).toList();
+                        return axis(0);
+                    }
+                    throw new AssertionError(method.getName());
+                });
+            var store = PgVectorStore.builder(db, model).dimensions(1536).initializeSchema(true).build();
+            store.afterPropertiesSet();
+            var semantic = new Document("semantic anchor", Map.of("scope", "SHARED", "documentId", "s", "embeddingModel", "qwen3-embedding:8b/1536"));
+            var lexical = new Document("keyword-only rare retrieval", Map.of("scope", "SHARED", "documentId", "l", "embeddingModel", "qwen3-embedding:8b/1536"));
+            store.add(List.of(semantic, lexical));
+            var dao = new JdbcRetrievalDao(db);
+            dao.initializeIndex();
+            var result = new RetrievalService(store, (query, passages) ->
+                passages.stream().map(text -> text.contains("keyword-only") ? 2.0 : 1.0).toList(), dao)
+                .search("rare retrieval", "SHARED", "alice");
+            assertFalse(result.vectorCandidates().stream().anyMatch(hit -> hit.chunkId().equals(lexical.getId())));
+            assertTrue(result.bm25Candidates().stream().anyMatch(hit -> hit.chunkId().equals(lexical.getId())));
+            assertTrue(result.candidates().stream().anyMatch(hit -> hit.chunkId().equals(lexical.getId())));
+            assertEquals(lexical.getId(), result.passages().get(0).chunkId());
+        }
+    }
+
     @Test void pgvectorFiltersPrivateAndSharedChunks() throws Exception {
-        try (var postgres = new PostgreSQLContainer<>("pgvector/pgvector:pg17")) {
+        try (var postgres = new PostgreSQLContainer<>(DockerImageName.parse("paradedb/paradedb:0.26.0-pg17")
+                .asCompatibleSubstituteFor("postgres"))) {
             postgres.start();
             var datasource = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
             new ResourceDatabasePopulator(new ClassPathResource("schema.sql")).execute(datasource);
@@ -43,11 +79,13 @@ class PgvectorSearchIT {
                 .dimensions(1536).initializeSchema(true).build();
             store.afterPropertiesSet();
             new KnowledgeDao(new JdbcTemplate(datasource)).backfillVectorCategories();
-            var shared = new Document("shared answer", Map.of("scope", "SHARED", "ownerId", "", "documentId", "shared"));
-            var alice = new Document("alice answer", Map.of("scope", "PRIVATE", "ownerId", "alice", "documentId", "alice"));
-            var bob = new Document("bob answer", Map.of("scope", "PRIVATE", "ownerId", "bob", "documentId", "bob"));
+            var shared = new Document("shared answer", Map.of("scope", "SHARED", "ownerId", "", "documentId", "shared", "embeddingModel", "qwen3-embedding:8b/1536"));
+            var alice = new Document("alice answer", Map.of("scope", "PRIVATE", "ownerId", "alice", "documentId", "alice", "embeddingModel", "qwen3-embedding:8b/1536"));
+            var bob = new Document("bob answer", Map.of("scope", "PRIVATE", "ownerId", "bob", "documentId", "bob", "embeddingModel", "qwen3-embedding:8b/1536"));
             store.add(List.of(shared, alice, bob));
-            var retrieval = new RetrievalService(store, (query, passages) -> passages.stream().map(p -> 1.0).toList());
+            var searchDao = new JdbcRetrievalDao(new JdbcTemplate(datasource));
+            searchDao.initializeIndex();
+            var retrieval = new RetrievalService(store, (query, passages) -> passages.stream().map(p -> 1.0).toList(), searchDao);
             var privateHits = retrieval.search("answer", "PRIVATE", "alice").candidates();
             assertEquals(1, privateHits.size());
             assertEquals("alice", privateHits.get(0).documentId());
@@ -100,7 +138,7 @@ class PgvectorSearchIT {
                     .run("--spring.datasource.url=" + postgres.getJdbcUrl(),
                         "--spring.datasource.username=" + postgres.getUsername(),
                         "--spring.datasource.password=" + postgres.getPassword(),
-                        "--spring.ai.openai.api-key=unused-test-key", "--app.admin-password=test-admin",
+                        "--app.admin-password=test-admin",
                         "--app.user-password=test-user", "--server.port=0")) {
                 assertNotNull(app.getBean(RetrievalService.class));
                 int port = ((ServletWebServerApplicationContext) app).getWebServer().getPort();
@@ -131,6 +169,12 @@ class PgvectorSearchIT {
     private static float[] vector() {
         float[] embedding = new float[1536];
         embedding[0] = 1;
+        return embedding;
+    }
+
+    private static float[] axis(int index) {
+        float[] embedding = new float[1536];
+        embedding[index] = 1;
         return embedding;
     }
 }

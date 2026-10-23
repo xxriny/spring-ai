@@ -88,6 +88,7 @@ class KnowledgeServiceTest {
             var item = service.upload(file, "  Spring AI  ", "user", admin);
             assertEquals("Spring AI", item.category());
             assertTrue(added.get().stream().allMatch(chunk -> "Spring AI".equals(chunk.getMetadata().get("category"))));
+            assertTrue(added.get().stream().allMatch(chunk -> "qwen3-embedding:8b/1536".equals(chunk.getMetadata().get("embeddingModel"))));
         }
     }
 }

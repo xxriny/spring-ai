@@ -8,9 +8,10 @@ spring:
   servlet.multipart.max-request-size: 20MB
   ai:
     model.chat: none
-    openai:
-      api-key: ${OPENAI_API_KEY:}
-      embedding.options.model: text-embedding-3-small
+    model.embedding: ollama
+    ollama:
+      base-url: ${OLLAMA_BASE_URL:http://127.0.0.1:11434}
+      embedding.model: qwen3-embedding:8b
     vectorstore.pgvector:
       initialize-schema: true
       dimensions: 1536
@@ -24,3 +25,5 @@ app:
   upload-dir: ${UPLOAD_DIR:./data/uploads}
   admin-password: ${APP_ADMIN_PASSWORD:}
   user-password: ${APP_USER_PASSWORD:}
+logging:
+  structured.format.console: logstash

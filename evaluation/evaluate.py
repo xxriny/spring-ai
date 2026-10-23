@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 
 QUESTIONS = Path(__file__).with_name('questions.json')
 K = (1, 3, 5, 10)
+STAGES = ('vectorCandidates', 'bm25Candidates', 'candidates', 'reranked', 'passages')
 
 
 def validate(questions):
@@ -41,14 +42,16 @@ def rank(hits, question, chunk):
 
 def evaluate_case(question, response):
     stages = {}
-    for stage in ('candidates', 'reranked'):
-        hits = response[stage]
+    for stage in STAGES:
+        hits = response.get(stage, [])
         stages[stage] = {'documentRank': rank(hits, question, False),
                          'chunkRank': rank(hits, question, True)}
     if stages['candidates']['chunkRank'] is None:
         status = 'candidate_miss'
     elif stages['reranked']['chunkRank'] is None:
         status = 'rerank_miss'
+    elif 'passages' in response and stages['passages']['chunkRank'] is None:
+        status = 'passage_miss'
     else:
         status = 'hit'
     return {'id': question['id'], 'language': question['language'], 'query': question['query'],
@@ -62,7 +65,7 @@ def summarize(records):
                  (language == 'all' or record['language'] == language)]
         report = {'n': len(group), 'errors': sum('error' in record and
                  (language == 'all' or record['language'] == language) for record in records)}
-        for stage in ('candidates', 'reranked'):
+        for stage in STAGES:
             report[stage] = {}
             for level, key in (('document', 'documentRank'), ('chunk', 'chunkRank')):
                 ranks = [record[stage][key] for record in group]
@@ -98,8 +101,9 @@ def main():
     now = dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
     output = Path(__file__).parent / 'results' / now
     output.mkdir(parents=True, exist_ok=False)
-    metadata = {'timeUtc': now, 'corpusUrls': urls, 'embeddingModel': 'text-embedding-3-small',
+    metadata = {'timeUtc': now, 'corpusUrls': urls, 'embeddingModel': 'qwen3-embedding:8b/1536',
                 'rerankerModel': 'Qwen/Qwen3-Reranker-0.6B', 'topK': 10, 'threshold': 0.3,
+                'bm25': 'pg_search 0.26.0', 'fusion': 'RRF k=60', 'passageTopK': 3,
                 'category': 'Spring AI docs', 'maxPages': 1}
     (output / 'config.json').write_text(json.dumps(metadata, indent=2))
     with (output / 'ingest.jsonl').open('w') as raw:
