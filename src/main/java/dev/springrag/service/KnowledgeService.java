@@ -13,6 +13,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -196,21 +197,25 @@ public class KnowledgeService {
         var root = html.selectFirst("main");
         if (root == null) root = html.selectFirst("article");
         if (root == null) root = html.body();
-        List<Document> sections = new ArrayList<>();
+        Map<String, Document> sections = new LinkedHashMap<>();
         String section = "";
         var text = new StringBuilder();
         for (var element : root.select("h1,h2,h3,h4,h5,h6,p,li,pre,blockquote,td")) {
             if (element.tagName().matches("h[1-6]")) {
-                if (!text.isEmpty()) sections.add(new Document(text.toString(), Map.of("section", section)));
+                if (!text.isEmpty()) sections.putIfAbsent(section + "\0" + text,
+                    new Document(text.toString(), Map.of("section", section)));
                 section = element.text();
                 text = new StringBuilder(section);
+            } else if (element.parents().stream().anyMatch(parent -> parent.is("p,li,pre,blockquote,td"))) {
+                continue;
             } else if (!element.text().isBlank()) {
                 if (!text.isEmpty()) text.append('\n');
                 text.append(element.text());
             }
         }
-        if (!text.isEmpty()) sections.add(new Document(text.toString(), Map.of("section", section)));
-        return sections;
+        if (!text.isEmpty()) sections.putIfAbsent(section + "\0" + text,
+            new Document(text.toString(), Map.of("section", section)));
+        return new ArrayList<>(sections.values());
     }
 
     private List<Document> extractPdf(byte[] bytes) {

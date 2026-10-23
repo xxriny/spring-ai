@@ -33,6 +33,12 @@
 
 메타데이터에는 `documentId`, `scope`, `ownerId`, `title`, `source`, `category`, `chunkOrder`, `embeddingModel=qwen3-embedding:8b/1536`이 들어간다. `PRIVATE`의 `ownerId`는 인증 계정이며 `SHARED`는 공용이다. PDF에는 `page_number`, `contentType=BODY|TABLE_ROW`, 표 행에는 `tableIndex`, `rowIndex`, `tableExtractionStatus`가 추가된다. 벡터 필터와 BM25·이웃 청크 SQL에서 모두 `scope`와 `ownerId`를 제한한다. DB 전환과 복구 절차는 [로컬 런북](../runbooks/SpringRagLocalV0_1_0.md)을 따른다.
 
+HTML 수집에서는 선택한 블록 요소의 중첩 자식 텍스트를 다시 읽지 않고, 같은 HTML 문서 안에서 `section` 제목과 본문이 모두 동일한 절은 한 번만 색인한다. 내용이 다른 동명 절은 유지한다. 기존 색인에는 자동 적용되지 않는다.
+
 ## 평가
 
 `evaluation/questions.json`의 공식 Spring AI 문서 4쪽·질문 16개에 대해 `vectorCandidates`, `bm25Candidates`, `candidates`, `reranked`, `passages` 각각 문서·근거 문구 Hit@1/3/5/10과 MRR을 동일한 기대 URL·문구 기준으로 산출한다. `python3 evaluation/evaluate.py`는 입력 검사만 수행하고 품질은 **미측정**으로 표시한다. 실제 수집·검색 `--execute`는 로컬 Ollama 임베딩을 사용한다. 결과는 `evaluation/results/<UTC>/`에 저장하며 오류 사례는 성공 지표에서 제외한다.
+
+최초 로컬 실측과 누락 사례는 [2026-10-23 평가 기록](LocalRetrievalEvaluation2026-10-23.md)에 정리했다.
+
+이후 검색 품질 변경 기준은 [ADR 0001](adr/0001-measure-retrieval-before-tuning.md)을 따른다.

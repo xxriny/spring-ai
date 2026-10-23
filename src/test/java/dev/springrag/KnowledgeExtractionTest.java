@@ -151,6 +151,35 @@ class KnowledgeExtractionTest {
         assertTrue(added.stream().allMatch(doc -> "https://docs.example.org/etl.html".equals(doc.getMetadata().get("source"))));
     }
 
+    @Test void htmlNestedListParagraphAppearsOnceInIndexedText() throws Exception {
+        List<Document> added = ingestDuplicateHtml();
+
+        String dependencies = added.stream().filter(doc -> "Dependencies".equals(doc.getMetadata().get("section")))
+            .findFirst().orElseThrow().getText();
+        assertEquals(1, dependencies.split("\\bMaven\\b", -1).length - 1);
+    }
+
+    @Test void htmlRepeatedIdenticalSectionsProduceOneChunk() throws Exception {
+        List<Document> added = ingestDuplicateHtml();
+
+        assertEquals(1, added.stream().filter(doc -> "Dependencies".equals(doc.getMetadata().get("section"))).count());
+        assertTrue(added.stream().anyMatch(doc -> doc.getText().contains("PagePdfDocumentReader extracts PDF pages.")));
+        assertTrue(added.stream().anyMatch(doc -> doc.getText().contains("ParagraphPdfDocumentReader extracts PDF paragraphs.")));
+    }
+
+    private List<Document> ingestDuplicateHtml() throws Exception {
+        List<Document> added = new ArrayList<>();
+        KnowledgeDao repository = new KnowledgeDao(new JdbcTemplate()) {
+            @Override public Existing findUrl(String scope, String url) { return null; }
+            @Override public void save(UUID id, boolean existing, String scope, String owner, String title, String url,
+                                String path, String hash, String category, List<String> chunkIds) {}
+        };
+        var service = new KnowledgeService(repository, vectors(added, new ArrayList<>()), transaction(), tempDir.toString());
+        service.ingestUrl(Files.readAllBytes(Path.of("src/test/resources/etl/duplicate-pdf-dependencies.html")),
+            "ETL", "https://docs.example.org/etl.html", "Spring AI");
+        return added;
+    }
+
     @Test void failedReindexDeletesOnlyNewChunks() {
         List<Document> added = new ArrayList<>();
         List<List<String>> deleted = new ArrayList<>();

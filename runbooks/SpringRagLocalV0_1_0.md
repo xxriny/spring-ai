@@ -212,6 +212,10 @@ python3 -m unittest discover -s evaluation -p 'test_*.py'
 
 기본 명령은 공식 문서 URL 4개와 질문 16개를 검증하고 품질을 **미측정**으로 표시한다. 실제 평가는 Ollama·Qwen 리랭커와 백엔드를 기동한 뒤 `EVAL_ADMIN_PASSWORD`를 설정하고 `python3 evaluation/evaluate.py --execute`로 실행한다. 이 명령은 URL별 `maxPages=1`로 수집 4회와 검색 질문 16개를 수행한다. 원시 응답과 결과는 `evaluation/results/<UTC>/`의 `config.json`, `ingest.jsonl`, `search.jsonl`, `summary.json`에서 확인한다. 오류가 난 질문은 성공한 지표 분모에 섞이지 않는다. 문서·청크 Hit@1/3/5/10과 MRR은 벡터, BM25, 결합, 재정렬, 최종 passage 각각 계산되며 답변 정확도를 뜻하지 않는다. 로컬 모델 추론이므로 외부 임베딩 API 과금은 없다. 실행 중 메모리·처리 시간을 관찰한다.
 
+HTML 중첩 텍스트·동일 절 중복 제거는 기존 색인에 자동 반영되지 않는다. 같은 URL의 내용 해시와 카테고리가 같으면 수집 시 재색인을 건너뛰므로, 변경 전후 품질을 비교하려면 DB와 업로드 원본을 백업한 뒤 대상 공식 문서를 삭제하고 다시 수집한다. 재수집 성공과 청크 건수·검색 결과를 확인하기 전에는 전체 데이터나 볼륨을 삭제하지 않는다.
+
+2026-10-23 기준 실측과 누락 질문은 [검색 평가 기록](../docs/LocalRetrievalEvaluation2026-10-23.md)에 남겼다. 재평가 시 같은 질문·근거 기준의 결과를 비교한다.
+
 ## 종료와 백업
 
 화면·백엔드·리랭커·OCR은 각 실행 터미널에서 정상 종료한다. DB만 중지할 때는 `docker compose -f infrastructure/compose.yaml stop db`를 사용한다. `docker compose -f infrastructure/compose.yaml down`은 컨테이너를 내리지만 명명 볼륨은 유지한다. **`down -v`는 사용하지 않는다.**

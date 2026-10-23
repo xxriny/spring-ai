@@ -9,7 +9,7 @@ Spring Boot 4 + Spring AI 2.0.1 백엔드, React + Vite 화면, PostgreSQL/pgvec
 - 로컬 `admin` / `user` 계정. 관리자는 **공용 문서**를 등록·삭제하고 웹 URL을 수집합니다. 사용자는 **내 문서**를 등록·삭제합니다.
 - 파일: TXT, PDF, DOC, DOCX, HTML/HTM (최대 20MB). 반복 머리말·꼬리말과 표를 분리한 뒤 본문과 표 행이 없는 PDF 페이지만 로컬 PaddleOCR 한국어 PP-OCRv5로 인식합니다.
 - URL: 관리자가 입력한 시작 페이지와 **같은 호스트·같은 경로 하위**의 HTML 및 링크된 TXT/PDF/DOC/DOCX를 `maxPages`(1~100, 기본 100)까지 수집합니다. 동일 URL의 동일 내용은 건너뛰고, 내용이 달라지면 재색인합니다.
-- Extract → Transform → Load: TXT/Word/HTML 텍스트를 추출하고, PDF는 로컬 pdfplumber 서비스가 반복 머리말·꼬리말을 제거하고 표 행을 Markdown으로 별도 추출합니다. 텍스트가 없는 PDF 페이지만 OCR로 읽습니다. 본문은 `TokenTextSplitter`로 나누고 같은 페이지·구간의 인접 청크에 이전 청크의 최대 100토큰을 겹칩니다. 표 행에는 오버랩을 적용하지 않습니다. 청크당 최대 800토큰을 유지하고 Ollama `qwen3-embedding:8b`의 1536차원 임베딩을 pgvector에 적재합니다. 공통 메타데이터는 `documentId`, `scope`, `ownerId`, `title`, `source`, `category`, `chunkOrder`, `embeddingModel`입니다. PDF에는 `page_number`와 `contentType=BODY|TABLE_ROW`를, 표 행에는 `tableIndex`, `rowIndex`, `tableExtractionStatus`를 추가합니다. 등록 시 카테고리 1~80자를 입력합니다.
+- Extract → Transform → Load: TXT/Word/HTML 텍스트를 추출하고, HTML은 중첩 요소의 텍스트 반복과 제목·본문이 완전히 같은 절의 중복을 제거합니다. PDF는 로컬 pdfplumber 서비스가 반복 머리말·꼬리말을 제거하고 표 행을 Markdown으로 별도 추출합니다. 텍스트가 없는 PDF 페이지만 OCR로 읽습니다. 본문은 `TokenTextSplitter`로 나누고 같은 페이지·구간의 인접 청크에 이전 청크의 최대 100토큰을 겹칩니다. 표 행에는 오버랩을 적용하지 않습니다. 청크당 최대 800토큰을 유지하고 Ollama `qwen3-embedding:8b`의 1536차원 임베딩을 pgvector에 적재합니다. 공통 메타데이터는 `documentId`, `scope`, `ownerId`, `title`, `source`, `category`, `chunkOrder`, `embeddingModel`입니다. PDF에는 `page_number`와 `contentType=BODY|TABLE_ROW`를, 표 행에는 `tableIndex`, `rowIndex`, `tableExtractionStatus`를 추가합니다. 등록 시 카테고리 1~80자를 입력합니다.
 - 인증된 독립 검색 API는 공용 문서 또는 본인 문서에 한해 pgvector Top-10(유사도 기준 0.3)과 BM25 Top-10을 조회합니다. 청크 ID로 중복 제거 후 RRF(k=60) 상위 10개를 로컬 `Qwen/Qwen3-Reranker-0.6B`로 재정렬합니다. 상위 3개 청크의 같은 문서·페이지 앞뒤 청크를 붙이고 오버랩을 제거해 passage당 최대 1,200토큰의 근거를 반환합니다.
 - 대화는 **공용 문서 / 내 문서** 중 하나의 검색 범위를 선택해 시작합니다. 대화가 시작된 뒤 범위를 바꾸면 새 대화로 전환됩니다. 검색 필터와 대화 소유권은 서버에서 검사합니다.
 - 생성 모델이 설정된 경우, 이전 질문을 고려해 검색어를 정리하고, 최종 passage만 근거로 답변하며, 사용한 문서를 오른쪽 패널에 표시합니다. `MessageChatMemoryAdvisor` + JDBC 대화 메모리를 사용합니다. 화면의 전체 대화 기록은 별도 테이블에 저장합니다. 현재는 생성 모델이 없어 질문 원문 하나로 검색하며 MultiQueryExpander는 아직 연결하지 않았습니다.
@@ -96,6 +96,8 @@ python3 evaluation/evaluate.py
 ```
 
 `evaluation/questions.json`에는 [ETL](https://docs.spring.io/spring-ai/reference/api/etl-pipeline.html), [PGvector](https://docs.spring.io/spring-ai/reference/api/vectordbs/pgvector.html), [Chat Memory](https://docs.spring.io/spring-ai/reference/api/chat-memory.html), [Chat Client](https://docs.spring.io/spring-ai/reference/api/chatclient.html) 각 한 쪽에 대한 질문 16개가 있습니다. 기본 평가 명령은 질문 세트만 검사하고 품질을 **미측정**으로 표시합니다. 실제 측정은 관리자 비밀번호를 `EVAL_ADMIN_PASSWORD`에 설정하고 `python3 evaluation/evaluate.py --execute`로 시작합니다. 이 명령은 URL별 `maxPages=1`로 네 번 수집하고 16개 검색을 호출하며 결과를 `evaluation/results/<UTC>/`에 저장합니다. `config.json`, `ingest.jsonl`, `search.jsonl`, `summary.json`에서 벡터·BM25·결합·재정렬·최종 passage의 Hit@k와 MRR을 비교하세요. 외부 임베딩 요금은 없지만 모델 다운로드·로컬 연산 자원을 사용합니다. 리랭커 오류는 503으로 기록되며 성공한 검색 지표에 섞지 않습니다.
+
+2026-10-23 로컬 실측 결과와 누락 사례 분석은 [검색 평가 기록](docs/LocalRetrievalEvaluation2026-10-23.md)에 있습니다. 당시 16문항 중 검색 오류는 없었고, 최종 passage의 근거 문구 Hit@3은 87.5%였습니다.
 
 ## 첫 버전 제한
 
