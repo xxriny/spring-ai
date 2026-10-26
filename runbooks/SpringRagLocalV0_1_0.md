@@ -1,21 +1,21 @@
 # Spring RAG 챗봇 로컬 운영 런북 (v0.1.0)
 
-이 문서는 현재 `admin`·`user` 두 계정을 사용하는 로컬 첫 버전의 기동, 확인, 장애 대응 절차다. 명령은 저장소 루트에서 실행한다. 생성용 채팅 모델은 아직 설정되지 않았으며 대화 질문 API는 503을 반환한다. 검색 API는 별도로 동작한다.
+이 문서는 현재 `admin`·`user` 두 계정을 사용하는 로컬 첫 버전의 기동, 확인, 장애 대응 절차다. 명령은 저장소 루트에서 실행한다. Ollama `qwen3.5:9b`가 답변을 생성하고 Qwen 리랭커가 검색 후보를 재정렬한다.
 
 ## 구성과 데이터
 
 | 구성 요소 | 기본 위치 | 역할 |
 | --- | --- | --- |
 | PostgreSQL 17/pgvector/pg_search | ParadeDB `0.26.0-pg17` Compose `db`, 호스트 `localhost:5432` | 문서 목록, 벡터·BM25 인덱스, 대화·채팅 메모리 |
-| Ollama Qwen3-Embedding-8B | `127.0.0.1:11434` | 문서·검색 질문을 1536차원으로 임베딩 |
-| Spring Boot | `localhost:8080` | 인증, ETL, 검색·리랭킹 API |
+| Ollama `qwen3-embedding:8b`·`qwen3.5:9b` | `127.0.0.1:11434` | 문서·검색 질문 임베딩, 후속 질문 재작성과 답변 생성 |
+| Spring Boot | `localhost:8080` | 인증, ETL, 검색·리랭킹·대화 API 및 NDJSON 답변 스트림 |
 | Qwen 리랭커 | `127.0.0.1:8091` | 검색 후보 1~10개에 대한 로컬 재정렬 |
 | PDF 추출·PaddleOCR | `127.0.0.1:8092` | pdfplumber 본문·표 추출, 텍스트 없는 페이지의 한국어 OCR |
 | React/Vite | `localhost:5173` | 로그인, 문서 등록, 대화 화면 |
 | 파일 원본 | `UPLOAD_DIR`, 기본 `./data/uploads` | 업로드한 원본 파일 |
 | 평가 원시 결과 | `evaluation/results/<UTC>/` | 수집·검색 응답과 지표; Git에서 제외됨 |
 
-문서 적재와 검색 질문 임베딩은 모두 로컬 Ollama `qwen3-embedding:8b`를 사용한다. 첫 실행에 모델 파일 약 4.7GB를 다운로드하며 OpenAI API 키는 필요하지 않다.
+문서 적재와 검색 질문 임베딩은 로컬 Ollama `qwen3-embedding:8b`를, 대화 재작성·답변은 `qwen3.5:9b`를 사용한다. 첫 실행에 두 모델을 다운로드하며 OpenAI API 키는 필요하지 않다.
 
 ## 기동 전 확인
 
@@ -106,20 +106,21 @@ docker compose -f infrastructure/compose.yaml exec -T db pg_isready -U springrag
 
 `pg_isready`가 연결 가능 상태를 반환한 뒤 다음 단계로 간다. 데이터는 Compose의 `pgdata` 볼륨에 남는다. 기존 DB 전환은 위 백업·복원 확인 후 수행한다.
 
-### 2. 로컬 임베딩
+### 2. 로컬 임베딩·생성
 
-Ollama를 설치하고 서비스를 실행한 뒤 모델을 받는다. 기본 주소는 루프백 `127.0.0.1:11434`다. 다운로드 용량은 약 4.7GB이며 추론에는 별도 메모리가 필요하다. 서버가 다른 주소라면 `OLLAMA_BASE_URL`을 설정한다.
+Ollama를 설치하고 서비스를 실행한 뒤 모델을 받는다. 기본 주소는 루프백 `127.0.0.1:11434`다. 임베딩 모델은 약 4.7GB, 생성 모델은 약 6.6GB이며 추론에는 별도 메모리가 필요하다. 서버가 다른 주소라면 `OLLAMA_BASE_URL`, 생성 모델을 바꾸려면 `OLLAMA_CHAT_MODEL`을 설정한다.
 
 ```bash
 ollama pull qwen3-embedding:8b
+ollama pull qwen3.5:9b
 ollama list
 ```
 
-Ollama가 자동으로 실행되지 않는 환경에서는 별도 터미널에서 `ollama serve`를 실행한다. 모델 목록만으로 추론 성공을 보장하지 않으므로 문서 한 건의 등록과 검색으로 확인한다. 기존 OpenAI 임베딩 청크가 있는 DB는 위 재색인 절차를 먼저 따른다.
+Ollama가 자동으로 실행되지 않는 환경에서는 별도 터미널에서 `ollama serve`를 실행한다. 모델 목록만으로 추론 성공을 보장하지 않으므로 문서 한 건의 등록·검색과 대화 질문으로 확인한다. 기존 OpenAI 임베딩 청크가 있는 DB는 위 재색인 절차를 먼저 따른다.
 
 ### 3. 로컬 리랭커
 
-첫 실행 전에 [모델 카드](https://huggingface.co/Qwen/Qwen3-Reranker-0.6B)의 다운로드 용량과 사용 가능한 메모리·CPU/GPU를 확인한다. 설치와 서버 시작은 별도 터미널에서 실행한다.
+첫 실행 전에 [모델 카드](https://huggingface.co/Qwen/Qwen3-Reranker-0.6B)의 다운로드 용량과 사용 가능한 메모리·CPU를 확인한다. macOS Metal 추론이 Ollama 생성 모델과 동시에 동작할 때 종료된 사례가 있어 현재 서버는 CPU·최대 256토큰 입력으로 추론한다. 백엔드의 리랭커 요청 제한 시간은 120초다. 설치와 서버 시작은 별도 터미널에서 실행한다.
 
 ```bash
 python3 -m venv .venv
@@ -128,7 +129,9 @@ python -m pip install -r infrastructure/reranker/requirements.txt
 python infrastructure/reranker/server.py
 ```
 
-모델 로드가 끝나면 서버가 `127.0.0.1:8091`에 바인딩된다. 다른 터미널의 `nc -z 127.0.0.1 8091`은 포트 접속만 확인한다. 실제 추론 품질이나 점수는 이 확인만으로 검증되지 않는다. 모델 파일은 저장소에 넣지 않는다.
+모델 로드가 끝나면 서버가 `127.0.0.1:8091`에 바인딩된다. `curl -fsS -X POST http://127.0.0.1:8091/rerank -H 'Content-Type: application/json' -d '{"query":"Spring AI","documents":["Spring AI 문서"]}'`로 실제 점수 응답을 확인한다. 모델 파일은 저장소에 넣지 않는다.
+
+2026-10-26 로컬 확인에서는 CPU·256토큰 제한으로 후보 10개 재정렬이 약 24초에 끝났고, `qwen3.5:9b` 답변 API가 HTTP 200·출처 3건을 반환했다. 이 한 번의 정상 응답은 답변 정확도나 전체 16문항 품질을 뜻하지 않는다. CPU 사용량이 높고 입력 뒷부분이 잘리므로 지연과 검색 품질을 별도로 평가해야 한다.
 
 ### 4. 로컬 PDF 추출·OCR
 
@@ -172,10 +175,27 @@ npm --prefix frontend run dev
 curl -fsS http://127.0.0.1:8080/api/health
 curl -u admin http://127.0.0.1:8080/api/me
 curl -u user 'http://127.0.0.1:8080/api/documents?scope=PRIVATE'
+curl -u admin http://127.0.0.1:8080/v3/api-docs
 docker compose -f infrastructure/compose.yaml exec -T db psql -U springrag -d springrag -c 'SELECT count(*) FROM knowledge_document;'
 ```
 
 `curl -u admin`과 `curl -u user`는 비밀번호를 명령 인수에 쓰지 않으면 입력을 요청한다. `/api/health`의 `{"status":"UP"}`는 **HTTP 핸들러만** 확인한다. DB, Ollama, Qwen 리랭커 준비 상태를 보증하지 않는다. DB는 `pg_isready`와 읽기 전용 조회로, Qwen은 프로세스 로그와 포트로 따로 확인한다.
+
+브라우저 API 문서는 `http://127.0.0.1:8080/swagger-ui.html`에서 연다. `/v3/api-docs`와 Swagger UI 모두 HTTP Basic 인증이 필요하다. JSON 응답의 `paths`에서 `/api/search` 등을, `components.securitySchemes.basicAuth`에서 인증 방식을 확인한다. 문서가 열려도 검색 의존 서비스의 준비 상태가 보장되는 것은 아니다.
+
+### 채팅 스트림 확인
+
+공용 또는 개인 문서 범위의 대화를 만든 뒤 반환된 `id`를 사용한다. 첫 명령의 `id`를 두 번째 줄의 `read` 프롬프트에 붙여넣고 Enter를 누른다. 아래 명령은 비밀번호를 인수에 넣지 않고 프롬프트에서 입력받는다. `-N`은 curl 출력 버퍼링을 끈다.
+
+```bash
+curl -u admin -H 'Content-Type: application/json' -d '{"scope":"SHARED"}' http://127.0.0.1:8080/api/conversations
+read -r CONVERSATION_ID
+curl -N -u admin -H 'Content-Type: application/json' -H 'Accept: application/x-ndjson' \
+  -d '{"text":"Spring AI ETL 단계는 무엇인가요?"}' \
+  "http://127.0.0.1:8080/api/conversations/$CONVERSATION_ID/messages/stream"
+```
+
+응답은 한 줄에 한 이벤트이며 `sources` → 여러 `delta` → `done` 순서다. `done`이 없으면 요청이 끝나지 않았거나 중간에 실패한 것이므로 화면용 답변 저장 여부를 메시지 조회 API로 확인한다. 첫 조각 전에 동기식 검색·리랭킹이 끝나야 한다. 2026-10-26 로컬 한 건에서는 출처 3건, `delta` 100건, 첫 조각 약 31초, 전체 약 37초였다. 이 값은 성능 기준선이 아니다.
 
 ## 문서 등록과 검색
 
@@ -214,7 +234,7 @@ python3 -m unittest discover -s evaluation -p 'test_*.py'
 
 HTML 중첩 텍스트·동일 절 중복 제거는 기존 색인에 자동 반영되지 않는다. 같은 URL의 내용 해시와 카테고리가 같으면 수집 시 재색인을 건너뛰므로, 변경 전후 품질을 비교하려면 DB와 업로드 원본을 백업한 뒤 대상 공식 문서를 삭제하고 다시 수집한다. 재수집 성공과 청크 건수·검색 결과를 확인하기 전에는 전체 데이터나 볼륨을 삭제하지 않는다.
 
-2026-10-23 기준 실측과 누락 질문은 [검색 평가 기록](../docs/LocalRetrievalEvaluation2026-10-23.md)에, 2026-10-26 재색인 후 비교 결과는 [To-Be 평가](../docs/LocalRetrievalEvaluation2026-10-26-ToBe.md)에 남겼다. 재평가 시 같은 질문·근거 기준의 결과를 비교한다.
+2026-10-23 기준 실측과 누락 질문은 [검색 평가 기록](../docs/LocalRetrievalEvaluation2026-10-23.md)에, 2026-10-26 재색인 후 비교 결과는 [To-Be 평가](../docs/LocalRetrievalEvaluation2026-10-26-ToBe.md)에 남겼다. 현재 CPU·256토큰 리랭커는 이 평가 뒤 변경됐으므로 16문항 지표가 미측정이다. 재평가 시 같은 질문·근거 기준의 결과를 비교한다.
 
 ## 종료와 백업
 
@@ -242,10 +262,11 @@ docker compose -f infrastructure/compose.yaml exec -T db pg_restore --list < "$B
 | 관리자 수집 403 | 로그인 계정 | `/api/admin/crawl`은 `admin`만 호출 가능 |
 | 등록·검색 400 | 카테고리 1~80자, 지원 파일 형식·20MB 제한, 질문 1~4000자, 범위 | 요청 값을 수정하고 재시도. 실패 URL은 `errors` 확인 |
 | 검색 503, 리랭커 오류 | Qwen 프로세스 로그, `8091` 포트, `RERANKER_URL` | 리랭커를 기동/복구한 뒤 같은 질문 재시도. 후보가 없으면 리랭커를 호출하지 않음 |
+| 채팅 스트림에 `done` 없음 | Ollama·리랭커 상태, `X-Trace-Id`, 대화 메시지 조회 | 연결 끊김 또는 생성 오류를 확인한다. 완료 전 답변은 화면용 기록에 저장하지 않음 |
 | 색인·검색 중 Ollama 연결/메모리 오류 | `ollama list`, Ollama 로그, `OLLAMA_BASE_URL`, 시스템 메모리 | 모델과 서버를 확인하고 메모리를 확보한 뒤 재시도 |
 | 검색에서 BM25 인덱스 오류 | `pg_search` 확장·`vector_store_bm25_idx`, DB 이미지 버전, `X-Trace-Id` | ParadeDB 0.26.0-pg17과 인덱스를 확인하고 앱 시작 로그를 조사. DB 전환 직후라면 백업·복원 확인부터 재검토 |
 | PDF 등록 오류 또는 URL 수집 `errors`에 추출·OCR 오류 | PDF 추출·PaddleOCR 프로세스 로그, `8092` 포트, `PDF_EXTRACTION_URL`, `OCR_URL` | 서버와 의존성을 복구한 뒤 재시도. 실패한 URL 재수집은 기존 색인을 유지함 |
-| 대화 질문 503, 생성 모델 미설정 | `spring.ai.model.chat` | 현재 첫 버전의 예상 동작. 독립 `/api/search`로 검색 경로 확인 |
+| 대화 질문 실패, Ollama 생성 모델 오류 | `ollama list`, Ollama 로그, `OLLAMA_CHAT_MODEL`, `OLLAMA_BASE_URL` | 생성 모델을 받은 뒤 Ollama 서버·메모리를 확인하고 재시도. 독립 `/api/search`로 검색 경로 분리 확인 |
 | 색인·검색 중 Ollama/DB 오류 | 백엔드 로그, `ollama list`, `OLLAMA_BASE_URL`, DB 상태 | 원인 복구 후 재시도. 변경 URL 재수집 실패 시 기존 카탈로그·청크가 유지되도록 구현됨. 조회로 확인 |
 | 수집 `indexed=0` 또는 `errors` 발생 | URL별 HTTP 상태, 경로 범위, 리다이렉트, 파일 형식 | 오류 URL만 재시도. 동일 URL·동일 내용은 중복 색인하지 않음 |
 

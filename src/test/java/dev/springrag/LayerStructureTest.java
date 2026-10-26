@@ -9,11 +9,18 @@ import dev.springrag.dto.CrawlRequest;
 import dev.springrag.dto.SearchResultDto;
 import dev.springrag.service.KnowledgeService;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 
 class LayerStructureTest {
-    @Test void mvcAndLayeredPackagesExist() throws Exception {
+    @Test @DisplayName("서비스별 컨트롤러와 DTO·서비스·DAO 계층을 유지한다")
+    void mvcAndLayeredPackagesExist() throws Exception {
         for (String name : new String[] {
-            "dev.springrag.controller.ApiController",
+            "dev.springrag.controller.SystemController",
+            "dev.springrag.controller.KnowledgeController",
+            "dev.springrag.controller.CrawlController",
+            "dev.springrag.controller.SearchController",
+            "dev.springrag.controller.ChatController",
+            "dev.springrag.controller.ApiExceptionHandler",
             "dev.springrag.dto.CrawlRequest",
             "dev.springrag.dto.SearchResultDto",
             "dev.springrag.service.RetrievalService",

@@ -4,6 +4,7 @@ import dev.springrag.dao.KnowledgeDao;
 import dev.springrag.dao.JdbcRetrievalDao;
 import dev.springrag.service.KnowledgeService;
 import dev.springrag.service.RetrievalService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import static org.junit.jupiter.api.Assertions.*;
 import java.lang.reflect.Proxy;
@@ -17,9 +18,11 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.Base64;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.vectorstore.pgvector.PgVectorStore;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.core.io.ClassPathResource;
@@ -69,7 +72,8 @@ class PgvectorSearchIT {
         }
     }
 
-    @Test void pgvectorFiltersPrivateAndSharedChunks() throws Exception {
+    @Test @DisplayName("개인·공용 검색 권한과 인증된 OpenAPI 명세를 제공한다")
+    void pgvectorFiltersPrivateAndSharedChunks() throws Exception {
         try (var postgres = new PostgreSQLContainer<>(DockerImageName.parse("paradedb/paradedb:0.26.0-pg17")
                 .asCompatibleSubstituteFor("postgres"))) {
             postgres.start();
@@ -141,6 +145,7 @@ class PgvectorSearchIT {
                         "--app.admin-password=test-admin",
                         "--app.user-password=test-user", "--server.port=0")) {
                 assertNotNull(app.getBean(RetrievalService.class));
+                assertNotNull(app.getBean(ChatModel.class));
                 int port = ((ServletWebServerApplicationContext) app).getWebServer().getPort();
                 var client = HttpClient.newHttpClient();
                 var unauthenticated = client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/search?query=test"))
@@ -150,6 +155,32 @@ class PgvectorSearchIT {
                 var blank = client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/search?query=&scope=PRIVATE"))
                     .header("Authorization", "Basic " + basic).GET().build(), HttpResponse.BodyHandlers.discarding());
                 assertEquals(400, blank.statusCode());
+                var docs = client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/v3/api-docs"))
+                    .header("Authorization", "Basic " + basic).GET().build(), HttpResponse.BodyHandlers.ofString());
+                assertEquals(200, docs.statusCode());
+                var unauthenticatedDocs = client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/v3/api-docs"))
+                    .GET().build(), HttpResponse.BodyHandlers.discarding());
+                assertEquals(401, unauthenticatedDocs.statusCode());
+                var swaggerUi = client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/swagger-ui.html"))
+                    .header("Authorization", "Basic " + basic).GET().build(), HttpResponse.BodyHandlers.discarding());
+                assertTrue(swaggerUi.statusCode() == 200 || swaggerUi.statusCode() == 302);
+                var swaggerPage = client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/swagger-ui/index.html"))
+                    .header("Authorization", "Basic " + basic).GET().build(), HttpResponse.BodyHandlers.ofString());
+                assertEquals(200, swaggerPage.statusCode());
+                assertTrue(swaggerPage.body().contains("swagger-ui"));
+                assertTrue(docs.body().contains("/api/search"));
+                assertTrue(docs.body().contains("/api/documents"));
+                assertTrue(docs.body().contains("basicAuth"));
+                var spec = new ObjectMapper().readTree(docs.body());
+                var search = spec.path("paths").path("/api/search").path("get");
+                assertEquals("문서 검색", search.path("summary").asText());
+                assertEquals("검색할 질문", search.path("parameters").get(0).path("description").asText());
+                assertTrue(search.path("responses").has("400"));
+                assertTrue(search.path("responses").has("503"));
+                assertEquals("http", spec.path("components").path("securitySchemes").path("basicAuth").path("type").asText());
+                assertEquals("basicAuth", search.path("security").get(0).fieldNames().next());
+                assertEquals("Spring AI docs", spec.path("components").path("schemas")
+                    .path("DocumentDto").path("properties").path("category").path("example").asText());
             }
         }
     }

@@ -2,6 +2,8 @@
 
 ## API와 권한
 
+실행 중인 명세는 인증 후 `/v3/api-docs`(JSON) 또는 `/swagger-ui.html`(Swagger UI)에서 확인할 수 있다. 전체 엔드포인트·DTO·오류 계약은 [HTTP API 계약](ApiContract.md)에, 아래에는 검색 단계와 평가 기준을 정리한다.
+
 `GET /api/search?query=<질문>&scope=SHARED|PRIVATE`는 HTTP Basic 인증이 필요하다. `scope` 기본값은 `SHARED`이며 `PRIVATE`의 소유자는 요청자가 지정할 수 없고 인증 주체로 결정한다. 질문은 공백만 있는 문자열을 허용하지 않으며 길이는 1~4,000자다. 잘못된 질문·범위는 `400 {"error":"..."}`, 인증 실패는 `401`, 리랭커 장애는 `503 {"error":"리랭커를 사용할 수 없습니다."}`다. 응답 헤더 `X-Trace-Id`에는 요청 UUID를 돌려준다.
 
 응답의 다섯 배열은 모두 순위가 높은 순이다.
@@ -16,12 +18,14 @@
 
 각 항목은 `chunkId`, `documentId`, `title`, `url`, `section`, `category`, `text`, `page`, `rank`, `vectorScore`, `rerankerScore`, `sourceChunkIds`를 가진다. `vectorScore`는 벡터 검색에서 온 경우에만 있고, `rerankerScore`는 `reranked`와 `passages`에만 있다. BM25 점수와 RRF 점수는 현재 응답에 노출하지 않는다. `sourceChunkIds`는 passage 구성에 사용한 청크 ID 목록이다. 검색 결과가 없으면 모든 배열이 비고 리랭커를 호출하지 않는다.
 
-`POST /api/conversations/{id}/messages`의 요청은 `{"text":"질문"}`이며, 생성 모델 연결 후 해당 대화의 범위와 소유권으로 검색한 **최종 `passages`**를 답변 근거로 사용한다. 현재 생성 모델이 없으므로 이 요청은 `503`이다. JDBC chat memory는 이전 대화 저장을 담당한다. MultiQueryExpander와 모델 기반 압축은 생성 모델 선택 후 연결한다. 현재 검색 API는 질문 원문 하나만 사용한다.
+`POST /api/conversations/{id}/messages`의 요청은 `{"text":"질문"}`이며, 대화의 범위와 소유권으로 검색한 **최종 `passages`**를 Ollama `qwen3.5:9b` 답변의 근거로 사용한다. 이전 메시지가 있으면 생성 모델이 후속 질문을 독립 검색어로 바꾼다. JDBC chat memory는 이전 대화 저장을 담당한다. 검색 후보가 없으면 근거 없음 답변을 저장한다. 리랭커 장애나 생성 모델 Bean 부재는 `503`이며 Ollama 호출 장애는 현재 서버 오류로 전파된다. MultiQueryExpander와 모델 기반 압축은 아직 연결하지 않았다. 독립 검색 API는 질문 원문 하나만 사용한다.
+
+`POST /api/conversations/{id}/messages/stream`은 같은 인증·소유권·범위와 `{"text":"질문"}` 요청을 사용하고, `200 application/x-ndjson`으로 한 줄에 JSON 이벤트 하나를 전송한다. 첫 이벤트는 `{"type":"sources","text":null,"sources":[...]}`, 이후 생성된 글자마다 `{"type":"delta","text":"...","sources":null}`, 저장이 끝난 마지막 이벤트는 `{"type":"done","text":null,"sources":null}`이다. 출처 배열은 기존 `SourceDto` 형식이다. 근거가 없으면 같은 형식으로 근거 없음 문구를 보낸다. 완료 전 연결이 끊기거나 생성이 실패하면 `done`이 없고 화면용 답변은 저장하지 않는다. 스트림 시작 전 검증 오류는 기존 `400`·`401`·`503` 형식을 따르며, 시작 뒤 오류는 HTTP 상태를 바꿀 수 없으므로 클라이언트가 `done` 누락을 실패로 처리한다. 기존 JSON 질문 API도 유지한다.
 
 ## 검색 순서
 
 1. 인증 범위로 pgvector Top-10(유사도 기준 0.3)과 BM25 Top-10을 각각 검색한다. `0.3`은 BM25·RRF·Qwen 점수에 적용하지 않는다.
-2. 청크 ID가 같은 결과는 하나로 합친다. 각 목록의 1부터 시작하는 순위에 `1/(60+rank)`를 부여하고 합한 RRF 순위 상위 10개만 Qwen에 전달한다.
+2. 청크 ID가 같은 결과는 하나로 합친다. 각 목록의 1부터 시작하는 순위에 `1/(60+rank)`를 부여하고 합한 RRF 순위 상위 10개만 Qwen에 전달한다. 현재 로컬 리랭커는 macOS Metal 충돌을 피하려고 CPU에서 각 입력을 최대 256토큰으로 잘라 점수를 계산한다. 본문 청크는 최대 800토큰이므로 뒷부분에만 있는 근거가 순위에서 불리할 수 있으며 이 설정의 검색 품질은 미측정이다.
 3. Qwen이 준 점수로 정렬하고 상위 3개 앵커의 앞뒤 `chunkOrder` 청크를 조회한다. 이웃 청크는 같은 `documentId`, `contentType`, PDF 페이지, HTML 섹션이어야 하며 표 행은 `tableIndex`도 같아야 한다. SQL에서 같은 범위와 소유자만 조회한다.
 4. 이웃 청크는 각 최대 200토큰으로 자른다. 본문 청크는 오버랩을 제거하고, Markdown 표 행은 행 경계를 유지하도록 줄바꿈으로 잇는다. 최종 본문은 앵커 앞뒤 순서로 결합하고 passage당 1,200토큰으로 제한한다. 3개 passage의 총 상한은 3,600토큰이다. 이는 결정적 추출식 절단이며 생성 모델의 요약은 아니다.
 

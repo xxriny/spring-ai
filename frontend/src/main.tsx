@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
+import { readNdjson } from './ndjson.ts'
 import './style.css'
 
 type Scope = 'SHARED' | 'PRIVATE'
 type Conversation = { id: string; title: string; scope: Scope }
 type Source = { title: string; url: string; excerpt: string; documentId: string; page?: number }
 type Message = { role: string; body: string; sources: Source[] }
+type ChatStreamEvent = { type: 'sources' | 'delta' | 'done'; text: string | null; sources: Source[] | null }
 type DocumentItem = { id: string; title: string; scope: Scope; sourceUrl: string | null; category: string; status: string }
 
 const preview = import.meta.env.DEV && new URLSearchParams(window.location.search).has('preview')
@@ -101,19 +103,40 @@ function App() {
       setBusy(false)
       return
     }
+    let conversation = active
     try {
-      let conversation = active
       if (!conversation) {
         conversation = await api<Conversation>('/conversations', { method: 'POST', body: JSON.stringify({ scope }) })
         setActive(conversation)
         setConversations(previous => [conversation!, ...previous])
       }
-      const answer = await api<{ answer: string; sources: Source[] }>(`/conversations/${conversation.id}/messages`, { method: 'POST', body: JSON.stringify({ text }) })
-      setMessages(previous => [...previous, { role: 'user', body: text, sources: [] }, { role: 'assistant', body: answer.answer, sources: answer.sources }])
+      setMessages(previous => [...previous, { role: 'user', body: text, sources: [] }, { role: 'assistant', body: '', sources: [] }])
       setQuestion('')
+      const response = await fetch(`/api/conversations/${conversation.id}/messages/stream`, {
+        method: 'POST',
+        headers: { Authorization: 'Basic ' + auth, 'Content-Type': 'application/json', Accept: 'application/x-ndjson' },
+        body: JSON.stringify({ text })
+      })
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({ error: `요청 실패 (${response.status})` }))
+        throw new Error(detail.error || `요청 실패 (${response.status})`)
+      }
+      if (!response.body) throw new Error('답변 스트림을 읽을 수 없습니다.')
+      let completed = false
+      for await (const event of readNdjson<ChatStreamEvent>(response.body)) {
+        if (event.type === 'sources') setMessages(previous => previous.map((message, index) =>
+          index === previous.length - 1 ? { ...message, sources: event.sources || [] } : message))
+        if (event.type === 'delta') setMessages(previous => previous.map((message, index) =>
+          index === previous.length - 1 ? { ...message, body: message.body + (event.text || '') } : message))
+        if (event.type === 'done') completed = true
+      }
+      if (!completed) throw new Error('답변 생성이 완료되지 않았습니다.')
       const list = await api<Conversation[]>('/conversations')
       setConversations(list)
-    } catch (e) { setError((e as Error).message) }
+    } catch (e) {
+      if (conversation) setMessages(await api<Message[]>(`/conversations/${conversation.id}/messages`).catch(() => []))
+      setError((e as Error).message)
+    }
     finally { setBusy(false) }
   }
 
@@ -163,14 +186,14 @@ function App() {
   const sources = [...messages].reverse().find(message => message.role === 'assistant')?.sources || []
   return <div className="app-shell">
     <aside className="sidebar"><div className="brand"><span className="brand-mark">✦</span> Spring RAG</div>
-      <button className="new-chat" onClick={() => { setActive(null); setMessages([]) }}><span>＋</span> 새 대화</button>
+      <button className="new-chat" disabled={busy} onClick={() => { setActive(null); setMessages([]) }}><span>＋</span> 새 대화</button>
       <button className="nav-button" onClick={() => setLibraryOpen(true)}>▤ <span>지식 문서</span><small>{documents.length}</small></button>
       <div className="sidebar-label">최근 대화</div>
-      <div className="conversation-list">{conversations.map(item => <button key={item.id} className={'conversation ' + (active?.id === item.id ? 'selected' : '')} onClick={() => openConversation(item)}><span>{item.title}</span><small>{item.scope === 'SHARED' ? '공용 문서' : '내 문서'}</small></button>)}</div>
-      <div className="sidebar-footer"><span className="avatar">{name.slice(0, 1).toUpperCase()}</span><span>{name}<small>{name === 'admin' ? '관리자' : '사용자'}</small></span><button title="로그아웃" onClick={() => { setAuth(''); setActive(null); setMessages([]) }}>↪</button></div>
+      <div className="conversation-list">{conversations.map(item => <button key={item.id} disabled={busy} className={'conversation ' + (active?.id === item.id ? 'selected' : '')} onClick={() => openConversation(item)}><span>{item.title}</span><small>{item.scope === 'SHARED' ? '공용 문서' : '내 문서'}</small></button>)}</div>
+      <div className="sidebar-footer"><span className="avatar">{name.slice(0, 1).toUpperCase()}</span><span>{name}<small>{name === 'admin' ? '관리자' : '사용자'}</small></span><button disabled={busy} title="로그아웃" onClick={() => { setAuth(''); setActive(null); setMessages([]) }}>↪</button></div>
     </aside>
-    <main className="main-area"><header className="topbar"><div><span className="eyebrow">KNOWLEDGE CHAT {preview && '· 화면 미리보기'}</span><h1>{active?.title || '새 대화'}</h1></div><div className="scope-picker" aria-label="문서 검색 범위"><button className={scope === 'SHARED' ? 'active' : ''} onClick={() => changeScope('SHARED')}>공용 문서</button><button className={scope === 'PRIVATE' ? 'active' : ''} onClick={() => changeScope('PRIVATE')}>내 문서</button></div></header>
-      <div className="workspace"><section className="chat-column">{messages.length === 0 ? <div className="welcome"><div className="welcome-symbol">✦</div><span className="eyebrow">ASK YOUR KNOWLEDGE</span><h2>무엇을 알고 싶으신가요?</h2><p>{scope === 'SHARED' ? '공용 문서' : '내 문서'}에서 근거를 찾아 답변합니다.<br/>질문을 입력해 대화를 시작해 보세요.</p><button onClick={() => setLibraryOpen(true)}>문서 살펴보기 →</button></div> : <div className="messages">{messages.map((message, index) => <article key={index} className={'message ' + message.role}><div className="message-icon">{message.role === 'user' ? name.slice(0, 1).toUpperCase() : '✦'}</div><div className="message-content"><div className="message-label">{message.role === 'user' ? '나' : 'Spring RAG'}</div><div className="message-body">{message.body}</div>{message.role === 'assistant' && message.sources.length > 0 && <div className="inline-sources">{message.sources.map((source, i) => <span key={i}>↗ {i + 1}. {source.title}</span>)}</div>}</div></article>)}</div>}
+    <main className="main-area"><header className="topbar"><div><span className="eyebrow">KNOWLEDGE CHAT {preview && '· 화면 미리보기'}</span><h1>{active?.title || '새 대화'}</h1></div><div className="scope-picker" aria-label="문서 검색 범위"><button disabled={busy} className={scope === 'SHARED' ? 'active' : ''} onClick={() => changeScope('SHARED')}>공용 문서</button><button disabled={busy} className={scope === 'PRIVATE' ? 'active' : ''} onClick={() => changeScope('PRIVATE')}>내 문서</button></div></header>
+      <div className="workspace"><section className="chat-column">{messages.length === 0 ? <div className="welcome"><div className="welcome-symbol">✦</div><span className="eyebrow">ASK YOUR KNOWLEDGE</span><h2>무엇을 알고 싶으신가요?</h2><p>{scope === 'SHARED' ? '공용 문서' : '내 문서'}에서 근거를 찾아 답변합니다.<br/>질문을 입력해 대화를 시작해 보세요.</p><button onClick={() => setLibraryOpen(true)}>문서 살펴보기 →</button></div> : <div className="messages">{messages.map((message, index) => <article key={index} className={'message ' + message.role}><div className="message-icon">{message.role === 'user' ? name.slice(0, 1).toUpperCase() : '✦'}</div><div className="message-content"><div className="message-label">{message.role === 'user' ? '나' : 'Spring RAG'}</div><div className="message-body">{message.body || (busy && index === messages.length - 1 && message.role === 'assistant' ? '답변 생성 중…' : '')}</div>{message.role === 'assistant' && message.sources.length > 0 && <div className="inline-sources">{message.sources.map((source, i) => <span key={i}>↗ {i + 1}. {source.title}</span>)}</div>}</div></article>)}</div>}
           <div className="composer-wrap">{error && <div className={'notice ' + (error.includes('등록') ? '' : 'error')} role="status">{error}</div>}<form className="composer" onSubmit={submit}><textarea aria-label="질문" placeholder="이어서 질문하기" value={question} onChange={e => setQuestion(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit() } }} rows={1}/><button type="submit" disabled={busy || !question.trim()} aria-label="질문 보내기">➤</button></form><small className="composer-hint">답변은 선택한 문서의 근거를 바탕으로 생성됩니다.</small></div>
         </section><aside className="source-panel"><div className="source-heading"><span className="eyebrow">SOURCES</span><h2>참고 자료</h2><p>답변에 사용된 문서를 확인하세요.</p></div>{sources.length ? sources.map((source, i) => <div className="source-card" key={i}><span className="source-number">{i + 1}</span><div><strong>{source.title}</strong><p>{source.excerpt}</p><small>{source.page ? `페이지 ${source.page} · ` : ''}{source.url === 'upload' ? '업로드 문서' : source.url}</small>{source.url.startsWith('http') && <a href={source.url} target="_blank" rel="noopener noreferrer">원문 열기 ↗</a>}</div></div>) : <div className="empty-sources">▤<p>질문을 입력하면<br/>참고한 문서가 여기에 표시됩니다.</p></div>}</aside></div>
     </main>

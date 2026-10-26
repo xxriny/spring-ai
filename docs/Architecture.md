@@ -1,21 +1,21 @@
 # Spring RAG 아키텍처 (현행 구현)
 
-기준: 2026-10-26 저장소 코드. 이 문서는 실행 중인 구성과 코드 경계를 설명한다. 검색 API는 동작하지만 생성용 채팅 모델은 설정되지 않았다.
+기준: 2026-10-26 저장소 코드. 이 문서는 실행 중인 구성과 코드 경계를 설명한다. 검색 API와 Ollama 생성 모델을 사용하는 대화 API가 있다.
 
 ## 코드와 실행 단위
 
 | 위치 | 역할 |
 | --- | --- |
 | [`frontend/`](../frontend/) | React 19·TypeScript·Vite 화면. `src/main.tsx`가 로그인, 대화, 문서 목록·업로드·수집 UI와 API 호출을 담당한다. 개발 서버는 `/api`를 Spring Boot로 프록시한다. |
-| [`src/main/java/dev/springrag/`](../src/main/java/dev/springrag/) | Spring Boot 4·Spring AI 2 백엔드. 현재는 저장소 루트 Maven 모듈 안에 `controller`, `dto`, `service`, `dao`, `config`, `infrastructure` 패키지를 둔다. |
+| [`src/main/java/dev/springrag/`](../src/main/java/dev/springrag/) | Spring Boot 4·Spring AI 2 백엔드. MVC 서버에서 WebFlux `Flux`를 채팅 NDJSON 스트림으로 변환한다. 현재는 저장소 루트 Maven 모듈 안에 `controller`, `dto`, `service`, `dao`, `config`, `infrastructure` 패키지를 둔다. |
 | [`infrastructure/`](../infrastructure/) | PostgreSQL/ParadeDB Compose, 로컬 Python PDF 추출·OCR 서버, 로컬 Qwen 리랭커 서버. Compose가 시작하는 서비스는 DB뿐이다. |
 | [`evaluation/`](../evaluation/) | 공식 문서 4쪽·16문항 검색 평가. 원시 결과는 Git 제외 `evaluation/results/`에 남긴다. |
 
-`AGENTS.md`의 서비스별 백엔드 패키지 및 `backend/` 모듈은 목표 구조다. 현재 코드가 그 구조로 이동한 것은 아니다.
+`AGENTS.md`의 서비스별 백엔드 패키지 및 `backend/` 모듈은 목표 구조다. 현재 코드가 그 구조로 이동한 것은 아니다. Springdoc OpenAPI 3.0.3이 `/swagger-ui.html`과 `/v3/api-docs`를 제공하며 두 경로에도 HTTP Basic 인증이 필요하다.
 
 ```mermaid
 flowchart LR
-    UI["React / Vite"] -->|"HTTP /api"| API["Spring MVC ApiController<br/>Basic 인증 · TraceIdFilter"]
+    UI["React / Vite"] -->|"HTTP /api"| API["Spring MVC<br/>System · Knowledge · Crawl · Search · Chat Controller<br/>Basic 인증 · TraceIdFilter"]
     API --> K["SiteCrawler · KnowledgeService"]
     API --> R["RetrievalService"]
     API --> C["ChatService"]
@@ -30,6 +30,7 @@ flowchart LR
     R -->|"후보 재정렬"| Q["Python Qwen 리랭커 :8091"]
     C --> CD["ChatDao"]
     C --> CM["Spring AI JDBC Chat Memory"]
+    C -->|"질문 재작성·답변 생성"| CHAT["Ollama qwen3.5:9b"]
     VS --> DB[(PostgreSQL 17 / pgvector / pg_search)]
     KD --> DB
     RD --> DB
@@ -37,7 +38,7 @@ flowchart LR
     CM --> DB
 ```
 
-`ApiController`는 인증 주체와 요청·응답 DTO를 다루고, 서비스는 수집·검색·대화 규칙을, DAO는 직접 SQL을 담당한다. 벡터 읽기·쓰기는 예외적으로 서비스가 Spring AI `VectorStore`를 통해 수행한다. Java 외부 HTTP 연동은 `service`의 인터페이스와 `infrastructure`의 구현으로 나뉜다.
+컨트롤러는 `SystemController`(상태·로그인 정보), `KnowledgeController`(문서), `CrawlController`(URL 수집), `SearchController`(검색), `ChatController`(대화)로 나뉜다. 각 컨트롤러는 인증 주체와 요청·응답 DTO를 다루며 `ApiExceptionHandler`가 공통 오류 응답을 처리한다. 서비스는 수집·검색·대화 규칙을, DAO는 직접 SQL을 담당한다. 벡터 읽기·쓰기는 예외적으로 서비스가 Spring AI `VectorStore`를 통해 수행한다. Java 외부 HTTP 연동은 `service`의 인터페이스와 `infrastructure`의 구현으로 나뉜다.
 
 ## 문서 수집과 색인
 
@@ -59,7 +60,9 @@ flowchart LR
 
 응답에는 `vectorCandidates`, `bm25Candidates`, `candidates`, `reranked`, `passages`가 각각 담긴다. 후보가 없으면 리랭커를 호출하지 않는다. 상세 응답 필드와 오류 형식은 [하이브리드 검색 명세](HybridRetrieval.md)를 따른다.
 
-[`ChatService`](../src/main/java/dev/springrag/service/ChatService.java)는 대화의 소유권·고정 검색 범위를 확인한다. 생성 모델이 연결되면 최근 저장 메시지로 후속 질문을 독립 검색어로 바꾸고, 위 검색의 **최종 passage**만 답변 근거로 보낸다. `MessageChatMemoryAdvisor`와 최대 20메시지 창을 사용한다. **현재 `spring.ai.model.chat=none`이므로 질문·답변 API는 검색 전에 503을 반환한다.** 독립 검색 API는 사용할 수 있다. MultiQueryExpander와 모델 기반 passage 요약은 아직 구현되지 않았다.
+[`ChatService`](../src/main/java/dev/springrag/service/ChatService.java)는 대화의 소유권·고정 검색 범위를 확인한다. 이전 메시지가 있으면 Ollama `qwen3.5:9b`로 후속 질문을 독립 검색어로 바꾸고, 위 검색의 **최종 passage**만 답변 근거로 보낸다. `MessageChatMemoryAdvisor`와 최대 20메시지 창을 사용한다. 독립 검색 API는 생성 모델을 호출하지 않는다. MultiQueryExpander와 모델 기반 passage 요약은 아직 구현되지 않았다.
+
+채팅의 `/messages/stream`은 Spring AI `ChatClient.stream().content()`의 `Flux`를 NDJSON 이벤트로 내보낸다. React는 출처와 답변 조각을 순서대로 표시하고 `done`을 확인한다. 검색·JDBC 단계는 기존 동기식 경계를 유지하며 완료된 답변만 `chat_message`에 저장한다. `spring-boot-starter-webflux`를 사용해도 웹 서버는 현재 Spring MVC이며, 전체 백엔드가 비차단 WebFlux로 전환된 것은 아니다. 기존 `/messages` JSON 응답은 계속 제공한다.
 
 ## 데이터와 권한
 
@@ -72,10 +75,10 @@ flowchart LR
 | `spring_ai_chat_memory` | Spring AI JDBC 대화 메모리. `chat_message`와 목적이 다른 별도 저장소다. |
 | `UPLOAD_DIR` | 업로드한 파일 원본. URL 수집 원본은 파일로 보관하지 않는다. |
 
-인증은 환경 변수로 주입한 고정 `admin`·`user` 계정과 HTTP Basic으로 처리한다. `/api/health` 외에는 인증이 필요하고 `/api/admin/**`는 관리자만 접근한다. `TraceIdFilter`는 요청 UUID를 MDC와 `X-Trace-Id` 응답 헤더에 넣는다. 검색 서비스의 구조화 로그는 단계별 건수와 소요 시간을 기록한다. API·데이터 모델의 상세 계약은 [검색 명세](HybridRetrieval.md), 기동·백업·복구는 [운영 런북](../runbooks/SpringRagLocalV0_1_0.md)에 있다.
+인증은 환경 변수로 주입한 고정 `admin`·`user` 계정과 HTTP Basic으로 처리한다. `/api/health` 외에는 인증이 필요하고 `/api/admin/**`는 관리자만 접근한다. OpenAPI에는 `basicAuth` 보안 스키마와 컨트롤러별 그룹, 상태 코드·파라미터 설명, 공개 DTO 예시를 기록한다. `TraceIdFilter`는 요청 UUID를 MDC와 `X-Trace-Id` 응답 헤더에 넣는다. 검색 서비스의 구조화 로그는 단계별 건수와 소요 시간을 기록한다. 엔드포인트·DTO·오류는 [API 계약](ApiContract.md), 검색·데이터 모델은 [하이브리드 검색 명세](HybridRetrieval.md), 기동·백업·복구는 [운영 런북](../runbooks/SpringRagLocalV0_1_0.md)에 있다.
 
 ## 현재 경계
 
 - 프런트엔드는 Vite 개발 서버의 `/api → localhost:8080` 프록시를 사용한다. `?preview`는 화면 샘플 데이터이며 백엔드 응답이 아니다.
 - URL 수집은 동기식이며 예약 재수집·작업 큐가 없다. 같은 URL 재수집도 원문 해시와 카테고리가 같으면 기존 색인을 유지한다.
-- 생성 모델, 다중 질의 확장, 운영용 사용자 관리가 없다. DB Compose 설정과 `application.yml`의 개발용 DB 비밀번호 기본값은 정리 대상이다.
+- 다중 질의 확장과 운영용 사용자 관리가 없다. DB Compose 설정과 `application.yml`의 개발용 DB 비밀번호 기본값은 정리 대상이다.
