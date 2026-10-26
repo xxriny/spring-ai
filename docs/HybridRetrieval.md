@@ -39,6 +39,6 @@ HTML 수집에서는 선택한 블록 요소의 중첩 자식 텍스트를 다�
 
 `evaluation/questions.json`의 공식 Spring AI 문서 4쪽·질문 16개에 대해 `vectorCandidates`, `bm25Candidates`, `candidates`, `reranked`, `passages` 각각 문서·근거 문구 Hit@1/3/5/10과 MRR을 동일한 기대 URL·문구 기준으로 산출한다. `python3 evaluation/evaluate.py`는 입력 검사만 수행하고 품질은 **미측정**으로 표시한다. 실제 수집·검색 `--execute`는 로컬 Ollama 임베딩을 사용한다. 결과는 `evaluation/results/<UTC>/`에 저장하며 오류 사례는 성공 지표에서 제외한다.
 
-최초 로컬 실측과 누락 사례는 [2026-10-23 평가 기록](LocalRetrievalEvaluation2026-10-23.md)에 정리했다.
+최초 로컬 실측과 누락 사례는 [2026-10-23 평가 기록](LocalRetrievalEvaluation2026-10-23.md)에, HTML 중복 제거 후 재색인한 결과는 [2026-10-26 To-Be 평가](LocalRetrievalEvaluation2026-10-26-ToBe.md)에 정리했다.
 
 이후 검색 품질 변경 기준은 [ADR 0001](adr/0001-measure-retrieval-before-tuning.md)을 따른다.

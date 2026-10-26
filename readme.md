@@ -99,7 +99,7 @@ python3 evaluation/evaluate.py
 
 `evaluation/questions.json`에는 [ETL](https://docs.spring.io/spring-ai/reference/api/etl-pipeline.html), [PGvector](https://docs.spring.io/spring-ai/reference/api/vectordbs/pgvector.html), [Chat Memory](https://docs.spring.io/spring-ai/reference/api/chat-memory.html), [Chat Client](https://docs.spring.io/spring-ai/reference/api/chatclient.html) 각 한 쪽에 대한 질문 16개가 있습니다. 기본 평가 명령은 질문 세트만 검사하고 품질을 **미측정**으로 표시합니다. 실제 측정은 관리자 비밀번호를 `EVAL_ADMIN_PASSWORD`에 설정하고 `python3 evaluation/evaluate.py --execute`로 시작합니다. 이 명령은 URL별 `maxPages=1`로 네 번 수집하고 16개 검색을 호출하며 결과를 `evaluation/results/<UTC>/`에 저장합니다. `config.json`, `ingest.jsonl`, `search.jsonl`, `summary.json`에서 벡터·BM25·결합·재정렬·최종 passage의 Hit@k와 MRR을 비교하세요. 외부 임베딩 요금은 없지만 모델 다운로드·로컬 연산 자원을 사용합니다. 리랭커 오류는 503으로 기록되며 성공한 검색 지표에 섞지 않습니다.
 
-2026-10-23 로컬 실측 결과와 누락 사례 분석은 [검색 평가 기록](docs/LocalRetrievalEvaluation2026-10-23.md)에 있습니다. 당시 16문항 중 검색 오류는 없었고, 최종 passage의 근거 문구 Hit@3은 87.5%였습니다.
+2026-10-23 기준선과 누락 사례는 [검색 평가 기록](docs/LocalRetrievalEvaluation2026-10-23.md)에, 공식 문서 4쪽 재색인 후 결과는 [2026-10-26 To-Be 평가](docs/LocalRetrievalEvaluation2026-10-26-ToBe.md)에 있습니다. 동일한 16문항의 최종 passage 근거 문구 Hit@3은 14/16에서 15/16으로 바뀌었고 `etl-03` 누락은 남았습니다.
 
 ## 첫 버전 제한
 
