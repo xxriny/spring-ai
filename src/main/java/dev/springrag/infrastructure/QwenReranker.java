@@ -24,7 +24,7 @@ public class QwenReranker implements Reranker {
     @Override public List<Double> scores(String query, List<String> passages) {
         if (passages.isEmpty() || passages.size() > 10) throw new IllegalArgumentException("리랭킹 후보는 1~10개여야 합니다");
         try {
-            var request = HttpRequest.newBuilder(url).timeout(Duration.ofSeconds(60))
+            var request = HttpRequest.newBuilder(url).timeout(Duration.ofSeconds(120))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(Map.of("query", query, "documents", passages))))
                 .build();

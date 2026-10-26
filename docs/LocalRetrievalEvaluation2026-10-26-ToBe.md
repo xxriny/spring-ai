@@ -5,6 +5,7 @@
 - [2026-10-23 기준선](LocalRetrievalEvaluation2026-10-23.md)과 동일한 공식 Spring AI 문서 URL 4개, `evaluation/questions.json`의 고정 질문 16개(영어 12개, 한국어 4개), 기대 URL·근거 문구를 사용했다.
 - DB 전체를 덤프하고 별도 임시 DB에 복원해 문서 4건, 청크 174건, 벡터 174건이 원본과 일치하는지 확인했다. 백업은 Git 제외 경로 `data/backups/springai-20261026-before-reindex.dump`에 권한 `0600`으로 보관했다. 평가 대상 공용 문서 4건만 API로 삭제한 후 `python3 evaluation/evaluate.py --execute`로 URL별 한 쪽씩 다시 수집했다. 수집 4건 모두 `indexed=1`, `errors=[]`였다.
 - Ollama `qwen3-embedding:8b/1536`, pgvector Top-10·유사도 기준 0.3, pg_search BM25 Top-10, RRF(k=60) Top-10, `Qwen/Qwen3-Reranker-0.6B`, passage Top-3 설정을 유지했다. 이번 리랭커 실행에는 `sentence-transformers 5.7.0`을 사용했다. 검색 16건의 오류는 0건이었다.
+- 이후 로컬 리랭커를 CPU·최대 256토큰 입력으로 바꿨다. 아래 16문항 지표는 **변경 전 실행 결과**이며 현재 리랭커 설정의 품질 지표로 사용하지 않는다. 현재 설정에서는 대화 API 한 건의 HTTP 200·출처 3건만 확인했고 검색 품질은 재평가하지 않았다.
 - 원시 결과는 Git 제외 경로 `evaluation/results/20261026T003315Z/`의 `config.json`, `ingest.jsonl`, `search.jsonl`, `summary.json`에 있다. 기존 결과는 `evaluation/results/20261023T075116Z/`에 있다.
 
 ## As-Is → To-Be 결과
@@ -33,7 +34,7 @@
 
 변경 전 Qwen 재정렬은 Top-3부터 순서대로 14/16, 15/16, 16/16, 16/16이었다. 변경 후 유일한 Top-3 누락인 `etl-03`의 기대 근거는 재정렬 **5위**에 있어, 이 표본에서는 Top-5가 16문항을 모두 포함하는 최소 컷오프다. Top-7·10은 근거 적중 문항을 더 늘리지 않았다.
 
-현재 API의 `passages`는 3개만 생성하므로 Top-5·7·10의 **실제 passage Hit@k는 실행하지 않았다**. 위 100%는 재정렬 청크의 근거 포함률이지, 확장·압축 후 passage의 실측치가 아니다. passage당 최대 1,200토큰을 유지한다면 전체 상한은 Top-3 3,600토큰, Top-5 6,000토큰, Top-7 8,400토큰, Top-10 12,000토큰이다. 생성 모델이 미정이므로 답변 정확도·지연·비용의 Top-k별 변화도 미측정이다.
+현재 API의 `passages`는 3개만 생성하므로 Top-5·7·10의 **실제 passage Hit@k는 실행하지 않았다**. 위 100%는 재정렬 청크의 근거 포함률이지, 확장·압축 후 passage의 실측치가 아니다. passage당 최대 1,200토큰을 유지한다면 전체 상한은 Top-3 3,600토큰, Top-5 6,000토큰, Top-7 8,400토큰, Top-10 12,000토큰이다. 평가 당시 생성 모델이 미정이어서 답변 정확도·지연·비용의 Top-k별 변화도 측정하지 않았다.
 
 ## 색인과 누락 사례
 
