@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import org.springframework.ai.tokenizer.JTokkitTokenCountEstimator;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
@@ -101,6 +102,61 @@ class RetrievalServiceTest {
         var result = new RetrievalService(vectorStore(new AtomicReference<>(), List.of(row)),
             (query, texts) -> List.of(1.0), dao).search("값", "SHARED", "alice");
         assertEquals("| 항목 | 값 |\n| 두 번째 | 2 |", result.passages().get(0).text());
+    }
+
+    @Test @DisplayName("뒤쪽 표 행의 passage에 같은 열의 긴 제목과 셀 값을 함께 담는다")
+    void laterPdfTableCellIncludesItsHeader() {
+        var cell = new Document("cell-3", "페이지 1 · 표 1 · 행 3\n| 열 1 내용 | 승인 기준 |", Map.of(
+            "scope", "PRIVATE", "ownerId", "alice", "documentId", "pdf", "chunkOrder", 7,
+            "contentType", "TABLE_ROW", "page_number", 1, "tableIndex", 1,
+            "rowIndex", 3, "columnIndex", 1, "tablePart", "CELL"));
+        var header = new Document("header", "페이지 1 · 표 1 · 행 1\n| 열 1 제목 | 채용 지원 자격 |", Map.of(
+            "scope", "PRIVATE", "ownerId", "alice", "documentId", "pdf", "chunkOrder", 1,
+            "contentType", "TABLE_ROW", "page_number", 1, "tableIndex", 1,
+            "rowIndex", 1, "columnIndex", 1, "tablePart", "HEADER"));
+        var dao = new RetrievalDao() {
+            @Override public List<Document> bm25(String query, String scope, String owner, int limit) { return List.of(); }
+            @Override public List<Document> neighbors(Document anchor, String scope, String owner) {
+                assertEquals("PRIVATE", scope);
+                assertEquals("alice", owner);
+                return List.of(header);
+            }
+        };
+
+        var result = new RetrievalService(vectorStore(new AtomicReference<>(), List.of(cell)),
+            (query, texts) -> List.of(1.0), dao).search("채용 지원 자격의 승인 기준", "PRIVATE", "alice");
+
+        assertTrue(result.passages().get(0).text().contains("채용 지원 자격"));
+        assertTrue(result.passages().get(0).text().contains("승인 기준"));
+        assertTrue(result.passages().get(0).sourceChunkIds().contains("header"));
+    }
+
+    @Test @DisplayName("긴 표 제목 조각이 많아도 질문과 관련된 제목과 셀 값을 보존한다")
+    void tableHeaderFragmentsDoNotPushCellOutOfPassage() {
+        var cell = new Document("cell", "| 열 1 내용 | 승인 기준: 3년 |", Map.of(
+            "scope", "SHARED", "documentId", "pdf", "chunkOrder", 20,
+            "contentType", "TABLE_ROW", "page_number", 1, "tableIndex", 1,
+            "columnIndex", 1, "tablePart", "CELL"));
+        List<Document> headers = new ArrayList<>();
+        for (int i = 0; i < 8; i++) {
+            headers.add(new Document("header-" + i,
+                "열 1 제목: " + "일반 안내 ".repeat(250) + (i == 7 ? "채용 지원 자격" : "기타 설명"),
+                Map.of("scope", "SHARED", "documentId", "pdf", "chunkOrder", i,
+                    "contentType", "TABLE_ROW", "page_number", 1, "tableIndex", 1,
+                    "columnIndex", 1, "tablePart", "HEADER")));
+        }
+        var dao = new RetrievalDao() {
+            @Override public List<Document> bm25(String query, String scope, String owner, int limit) { return List.of(); }
+            @Override public List<Document> neighbors(Document anchor, String scope, String owner) { return headers; }
+        };
+
+        var passage = new RetrievalService(vectorStore(new AtomicReference<>(), List.of(cell)),
+            (query, texts) -> List.of(1.0), dao).search("채용 지원 자격 승인 기준", "SHARED", "alice").passages().get(0);
+
+        assertTrue(passage.text().contains("채용 지원 자격"));
+        assertTrue(passage.text().contains("승인 기준: 3년"));
+        assertTrue(passage.sourceChunkIds().contains("header-7"));
+        assertTrue(new JTokkitTokenCountEstimator().estimate(passage.text()) <= 1200);
     }
 
     @Test void adjacentHtmlSectionsStaySeparate() {

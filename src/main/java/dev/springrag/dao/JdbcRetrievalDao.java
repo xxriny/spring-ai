@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.springrag.config.LocalEmbeddingConfig;
 import java.util.List;
 import java.util.Map;
+import java.util.ArrayList;
 import org.springframework.ai.document.Document;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
@@ -44,16 +45,34 @@ public class JdbcRetrievalDao implements RetrievalDao {
             : db.query(sql, mapper, query, scope, limit);
     }
 
+    /**
+     * 같은 문서의 인접 청크와 표 셀에 연결된 긴 열 제목을 권한 범위 안에서 조회한다.
+     *
+     * @param anchor 검색된 기준 청크
+     * @param scope 공용 또는 개인 문서 범위
+     * @param owner 개인 문서의 인증된 소유자
+     * @return 접근 가능한 인접 청크와 같은 표·열의 제목 청크
+     */
     @Override public List<Document> neighbors(Document anchor, String scope, String owner) {
         Map<String, Object> metadata = anchor.getMetadata();
         Object documentId = metadata.get("documentId"), chunkOrder = metadata.get("chunkOrder");
         if (documentId == null || chunkOrder == null) return List.of();
         int order = chunkOrder instanceof Number number ? number.intValue() : Integer.parseInt(chunkOrder.toString());
-        String sql = COLUMNS + "metadata->>'documentId'=? AND metadata->>'chunkOrder' IN (?,?) "
-            + "AND metadata->>'scope'=? " + ("PRIVATE".equals(scope) ? "AND metadata->>'ownerId'=? " : "");
-        return "PRIVATE".equals(scope)
-            ? db.query(sql, mapper, documentId.toString(), String.valueOf(order - 1), String.valueOf(order + 1), scope, owner)
-            : db.query(sql, mapper, documentId.toString(), String.valueOf(order - 1), String.valueOf(order + 1), scope);
+        boolean tableCell = "CELL".equals(metadata.get("tablePart")) && metadata.get("page_number") != null
+            && metadata.get("tableIndex") != null && metadata.get("columnIndex") != null;
+        String sql = COLUMNS + "metadata->>'documentId'=? AND (metadata->>'chunkOrder' IN (?,?)"
+            + (tableCell ? " OR (metadata->>'tablePart'='HEADER' AND metadata->>'page_number'=? "
+                + "AND metadata->>'tableIndex'=? AND metadata->>'columnIndex'=?)" : "")
+            + ") AND metadata->>'scope'=? " + ("PRIVATE".equals(scope) ? "AND metadata->>'ownerId'=? " : "");
+        List<Object> args = new ArrayList<>(List.of(documentId.toString(), String.valueOf(order - 1), String.valueOf(order + 1)));
+        if (tableCell) {
+            args.add(String.valueOf(metadata.get("page_number")));
+            args.add(String.valueOf(metadata.get("tableIndex")));
+            args.add(String.valueOf(metadata.get("columnIndex")));
+        }
+        args.add(scope);
+        if ("PRIVATE".equals(scope)) args.add(owner);
+        return db.query(sql, mapper, args.toArray());
     }
 
     private Map<String, Object> metadata(String value) {

@@ -12,10 +12,13 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.reader.TextReader;
@@ -69,6 +72,18 @@ public class KnowledgeService {
         return repository.list(owner, scope);
     }
 
+    /**
+     * 파일에서 본문과 표를 추출해 권한 범위에 맞는 검색 청크로 등록한다.
+     *
+     * @param file 등록할 파일
+     * @param category 문서 카테고리
+     * @param owner 로그인 계정
+     * @param admin 관리자 여부; 관리자는 공용 문서로 등록한다
+     * @return 등록된 문서 정보
+     * @throws IOException 원본 파일을 읽거나 저장할 수 없는 경우
+     * @throws IllegalArgumentException 파일 형식 또는 추출 결과가 올바르지 않은 경우
+     * @throws PdfExtractionClient.PdfExtractionUnavailableException PDF 추출 서버를 사용할 수 없는 경우
+     */
     public DocumentDto upload(MultipartFile file, String category, String owner, boolean admin) throws IOException {
         String normalizedCategory = normalizeCategory(category);
         String name = file.getOriginalFilename() == null ? "" : Path.of(file.getOriginalFilename()).getFileName().toString();
@@ -225,6 +240,7 @@ public class KnowledgeService {
         try (var pdf = needsOcr ? Loader.loadPDF(bytes) : null) {
             PDFRenderer renderer = needsOcr ? new PDFRenderer(pdf) : null;
             for (PdfPageDto page : extracted) {
+                Set<String> indexedHeaders = new HashSet<>();
                 String body = page.body();
                 if (page.ocrRequired()) {
                     var image = renderer.renderImageWithDPI(page.pageNumber() - 1, 150);
@@ -238,7 +254,7 @@ public class KnowledgeService {
                     Map<String, Object> metadata = Map.of("page_number", page.pageNumber(),
                         "contentType", "TABLE_ROW", "tableIndex", row.tableIndex(), "rowIndex", row.rowIndex(),
                         "tableExtractionStatus", row.extractionStatus());
-                    pages.addAll(tableChunks(row, page.pageNumber(), metadata));
+                    pages.addAll(tableChunks(row, page.pageNumber(), metadata, indexedHeaders));
                 }
             }
             return pages;
@@ -247,35 +263,62 @@ public class KnowledgeService {
         }
     }
 
-    private List<Document> tableChunks(PdfTableRowDto row, int pageNumber, Map<String, Object> metadata) {
-        if (tokenCounter.estimate(row.markdown()) <= 800) return List.of(new Document(row.markdown(), metadata));
-        List<Document> chunks = new ArrayList<>();
+    private List<Document> tableChunks(PdfTableRowDto row, int pageNumber, Map<String, Object> metadata,
+                                       Set<String> indexedHeaders) {
         String identity = "페이지 " + pageNumber + " · 표 " + row.tableIndex() + " · 행 " + row.rowIndex() + "\n";
+        if (tokenCounter.estimate(row.markdown()) <= 800) {
+            boolean longHeader = false;
+            for (int column = 0; column < row.cells().size(); column++) {
+                if (!row.cells().get(column).isBlank() && tokenCounter.estimate(identity
+                    + "| 항목 | 내용 |\n| --- | --- |\n| " + escapeTableCell(row.headers().get(column)) + " | ") > 700) {
+                    longHeader = true;
+                    break;
+                }
+            }
+            if (!longHeader) return List.of(new Document(row.markdown(), metadata));
+        }
+        List<Document> chunks = new ArrayList<>();
         for (int column = 0; column < row.cells().size(); column++) {
-            String header = escapeTableCell(row.headers().get(column));
             String cell = row.cells().get(column);
             if (cell.isBlank()) continue;
-            String prefix = identity + "| 항목 | 내용 |\n| --- | --- |\n| " + header + " | ";
-            if (tokenCounter.estimate(prefix + "x |") > 800)
-                throw new IllegalArgumentException("PDF 표 열 제목이 청크 한도를 초과합니다");
-            int codePoints = cell.codePointCount(0, cell.length());
-            int start = 0;
-            while (start < codePoints) {
-                int low = start + 1;
-                int high = codePoints;
-                while (low < high) {
-                    int mid = (low + high + 1) / 2;
-                    String content = escapeTableCell(cell.substring(cell.offsetByCodePoints(0, start), cell.offsetByCodePoints(0, mid)));
-                    if (tokenCounter.estimate(prefix + content + " |") <= 800) low = mid;
-                    else high = mid - 1;
-                }
-                String content = escapeTableCell(cell.substring(cell.offsetByCodePoints(0, start), cell.offsetByCodePoints(0, low)));
-                chunks.add(new Document(prefix + content + " |", metadata));
-                start = low;
+            String prefix = identity + "| 항목 | 내용 |\n| --- | --- |\n| " + escapeTableCell(row.headers().get(column)) + " | ";
+            if (tokenCounter.estimate(prefix) > 700) {
+                // 같은 표의 긴 제목은 한 번만 임베딩하고 이후 행은 열 번호로 연결한다.
+                Map<String, Object> headerMetadata = new HashMap<>(metadata);
+                headerMetadata.put("columnIndex", column + 1);
+                headerMetadata.put("tablePart", "HEADER");
+                if (indexedHeaders.add(row.tableIndex() + ":" + column))
+                    addTableTextChunks(chunks, identity + "| 항목 | 내용 |\n| --- | --- |\n| 열 " + (column + 1) + " 제목 | ",
+                        row.headers().get(column), headerMetadata);
+                prefix = identity + "| 항목 | 내용 |\n| --- | --- |\n| 열 " + (column + 1) + " 내용 | ";
+                Map<String, Object> cellMetadata = new HashMap<>(metadata);
+                cellMetadata.put("columnIndex", column + 1);
+                cellMetadata.put("tablePart", "CELL");
+                addTableTextChunks(chunks, prefix, cell, cellMetadata);
+            } else {
+                addTableTextChunks(chunks, prefix, cell, metadata);
             }
         }
         if (chunks.isEmpty()) throw new IllegalArgumentException("PDF 표 행을 청크로 나눌 수 없습니다");
         return chunks;
+    }
+
+    private void addTableTextChunks(List<Document> chunks, String prefix, String value, Map<String, Object> metadata) {
+        int codePoints = value.codePointCount(0, value.length());
+        int start = 0;
+        while (start < codePoints) {
+            int low = start + 1;
+            int high = codePoints;
+            while (low < high) {
+                int mid = (low + high + 1) / 2;
+                String content = escapeTableCell(value.substring(value.offsetByCodePoints(0, start), value.offsetByCodePoints(0, mid)));
+                if (tokenCounter.estimate(prefix + content + " |") <= 800) low = mid;
+                else high = mid - 1;
+            }
+            String content = escapeTableCell(value.substring(value.offsetByCodePoints(0, start), value.offsetByCodePoints(0, low)));
+            chunks.add(new Document(prefix + content + " |", metadata));
+            start = low;
+        }
     }
 
     private static String escapeTableCell(String value) {

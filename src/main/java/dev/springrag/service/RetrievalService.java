@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import org.springframework.ai.document.Document;
@@ -69,7 +70,7 @@ public class RetrievalService {
             int index = order.get(rank);
             Document anchor = fused.get(index);
             reranked.add(hit(anchor, rank + 1, scores.get(index)));
-            if (rank < PASSAGE_K) passages.add(passage(anchor, rank + 1, scores.get(index), scope, owner));
+            if (rank < PASSAGE_K) passages.add(passage(anchor, rank + 1, scores.get(index), scope, owner, query));
         }
         logSearch(scope, semantic.size(), lexical.size(), fused.size(), passages.size(),
             start, vectorDone, bm25Done, rerankDone, System.nanoTime());
@@ -105,10 +106,30 @@ public class RetrievalService {
         }
     }
 
-    private SearchHitDto passage(Document anchor, int rank, double score, String scope, String owner) {
+    private SearchHitDto passage(Document anchor, int rank, double score, String scope, String owner, String query) {
         List<Document> context = new ArrayList<>();
         for (Document neighbor : dao.neighbors(anchor, scope, owner)) {
             if (sameBoundary(anchor, neighbor)) context.add(neighbor);
+        }
+        if ("CELL".equals(anchor.getMetadata().get("tablePart"))) {
+            Document header = context.stream().filter(d -> "HEADER".equals(d.getMetadata().get("tablePart")))
+                .max(Comparator.comparingInt(d -> headerScore(d.getText(), query))).orElse(null);
+            if (header != null) {
+                StringBuilder text = new StringBuilder(anchor.getText()).append("\n열 ")
+                    .append(anchor.getMetadata().get("columnIndex")).append(" 제목: ")
+                    .append(headerExcerpt(header.getText(), query));
+                List<String> ids = new ArrayList<>(List.of(anchor.getId(), header.getId()));
+                for (Document neighbor : context) {
+                    if ("HEADER".equals(neighbor.getMetadata().get("tablePart"))) continue;
+                    text.append('\n').append(chunkOrder(neighbor.getMetadata()) < chunkOrder(anchor.getMetadata())
+                        ? tail(neighbor.getText(), 200) : head(neighbor.getText(), 200));
+                    ids.add(neighbor.getId());
+                }
+                SearchHitDto original = hit(anchor, rank, score);
+                return new SearchHitDto(original.chunkId(), original.documentId(), original.title(), original.url(),
+                    original.section(), original.category(), head(text.toString(), 1200), original.page(), rank,
+                    original.vectorScore(), score, ids);
+            }
         }
         context.add(anchor);
         context.sort(Comparator.comparingInt(d -> chunkOrder(d.getMetadata())));
@@ -137,7 +158,30 @@ public class RetrievalService {
         if (!Objects.equals(a.get("section"), b.get("section"))) return false;
         if (!Objects.equals(a.get("page_number"), b.get("page_number"))) return false;
         if ("TABLE_ROW".equals(a.get("contentType")) && !String.valueOf(a.get("tableIndex")).equals(String.valueOf(b.get("tableIndex")))) return false;
+        if ("CELL".equals(a.get("tablePart")) && "HEADER".equals(b.get("tablePart")))
+            return Objects.equals(a.get("columnIndex"), b.get("columnIndex"));
         return Math.abs(chunkOrder(a) - chunkOrder(b)) == 1;
+    }
+
+    private static int headerScore(String text, String query) {
+        String lower = text.toLowerCase(Locale.ROOT);
+        int score = 0;
+        for (String term : query.toLowerCase(Locale.ROOT).split("[^\\p{L}\\p{N}]+")) {
+            if (term.length() > 1 && lower.contains(term)) score++;
+        }
+        return score;
+    }
+
+    private String headerExcerpt(String text, String query) {
+        String lower = text.toLowerCase(Locale.ROOT);
+        int match = -1;
+        for (String term : query.toLowerCase(Locale.ROOT).split("[^\\p{L}\\p{N}]+")) {
+            if (term.length() > 1) {
+                int found = lower.indexOf(term);
+                if (found >= 0 && (match < 0 || found < match)) match = found;
+            }
+        }
+        return head(text.substring(Math.max(0, match - 80)), 200);
     }
 
     private static int chunkOrder(Map<String, Object> metadata) {

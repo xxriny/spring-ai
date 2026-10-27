@@ -26,8 +26,8 @@
 
 1. 인증 범위로 pgvector Top-10(유사도 기준 0.3)과 BM25 Top-10을 각각 검색한다. `0.3`은 BM25·RRF·Qwen 점수에 적용하지 않는다.
 2. 청크 ID가 같은 결과는 하나로 합친다. 각 목록의 1부터 시작하는 순위에 `1/(60+rank)`를 부여하고 합한 RRF 순위 상위 10개만 Qwen에 전달한다. 현재 로컬 리랭커는 macOS Metal 충돌을 피하려고 CPU에서 각 입력을 최대 256토큰으로 잘라 점수를 계산한다. 본문 청크는 최대 800토큰이므로 뒷부분에만 있는 근거가 순위에서 불리할 수 있으며 이 설정의 검색 품질은 미측정이다.
-3. Qwen이 준 점수로 정렬하고 상위 3개 앵커의 앞뒤 `chunkOrder` 청크를 조회한다. 이웃 청크는 같은 `documentId`, `contentType`, PDF 페이지, HTML 섹션이어야 하며 표 행은 `tableIndex`도 같아야 한다. SQL에서 같은 범위와 소유자만 조회한다.
-4. 이웃 청크는 각 최대 200토큰으로 자른다. 본문 청크는 오버랩을 제거하고, Markdown 표 행은 행 경계를 유지하도록 줄바꿈으로 잇는다. 최종 본문은 앵커 앞뒤 순서로 결합하고 passage당 1,200토큰으로 제한한다. 3개 passage의 총 상한은 3,600토큰이다. 이는 결정적 추출식 절단이며 생성 모델의 요약은 아니다.
+3. Qwen이 준 점수로 정렬하고 상위 3개 앵커의 앞뒤 `chunkOrder` 청크를 조회한다. 이웃 청크는 같은 `documentId`, `contentType`, PDF 페이지, HTML 섹션이어야 하며 표 행은 `tableIndex`도 같아야 한다. 긴 표 셀에는 같은 `columnIndex`의 제목 조각도 조회한다. SQL에서 같은 범위와 소유자만 조회한다.
+4. 이웃 청크는 각 최대 200토큰으로 자른다. 본문 청크는 오버랩을 제거하고, Markdown 표 행은 행 경계를 유지하도록 줄바꿈으로 잇는다. 긴 표 셀은 질문 단어와 가장 많이 겹치는 제목 조각의 최대 200토큰을 셀 뒤에 둔다. 최종 passage는 1,200토큰, 3개 passage의 총합은 3,600토큰으로 제한한다. 이는 결정적 추출식 절단이며 생성 모델의 요약은 아니다.
 
 구조화 로그에는 `traceId`, 범위, 각 단계의 건수와 소요 시간만 기록한다. 질문, 문서 본문, 인증값은 기록하지 않는다.
 
@@ -35,7 +35,7 @@
 
 `knowledge_document(id, scope, owner_id, title, category, source_url, stored_path, sha256, status, created_at, updated_at)`가 문서 카탈로그다. `knowledge_chunk(document_id, chunk_id)`는 문서와 검색 청크의 관계이며 문서 삭제 시 같이 삭제된다. Spring AI가 관리하는 `vector_store(id, content, metadata, embedding)`는 실제 검색 본문·JSON 메타데이터·Ollama `qwen3-embedding:8b`의 1536차원 임베딩의 단일 저장소다. 모델 출력을 1536차원으로 요청해 기존 pgvector HNSW `vector` 인덱스를 유지한다. 이 테이블에 pgvector HNSW 인덱스와 `vector_store_bm25_idx` (`USING paradedb (id, content)`)가 있다. 앱 시작 시 `pg_search` 확장과 BM25 인덱스를 생성하므로 기존 행도 색인된다. 문서 등록·갱신·삭제는 기존 VectorStore 저장 경로를 따른다. 모델이 다른 기존 1536차원 벡터는 서로 검색할 수 없으므로 `embeddingModel`이 현재 값과 다른 행이 있으면 시작을 중단한다.
 
-메타데이터에는 `documentId`, `scope`, `ownerId`, `title`, `source`, `category`, `chunkOrder`, `embeddingModel=qwen3-embedding:8b/1536`이 들어간다. `PRIVATE`의 `ownerId`는 인증 계정이며 `SHARED`는 공용이다. PDF에는 `page_number`, `contentType=BODY|TABLE_ROW`, 표 행에는 `tableIndex`, `rowIndex`, `tableExtractionStatus`가 추가된다. 벡터 필터와 BM25·이웃 청크 SQL에서 모두 `scope`와 `ownerId`를 제한한다. DB 전환과 복구 절차는 [로컬 런북](../runbooks/SpringRagLocalV0_1_0.md)을 따른다.
+메타데이터에는 `documentId`, `scope`, `ownerId`, `title`, `source`, `category`, `chunkOrder`, `embeddingModel=qwen3-embedding:8b/1536`이 들어간다. `PRIVATE`의 `ownerId`는 인증 계정이며 `SHARED`는 공용이다. PDF에는 `page_number`, `contentType=BODY|TABLE_ROW`, 표 행에는 `tableIndex`, `rowIndex`, `tableExtractionStatus`가 추가된다. 긴 표 열 제목은 페이지·표·열마다 한 번만 색인하고, 제목·셀 청크에 `columnIndex`와 `tablePart=HEADER|CELL`을 붙인다. 벡터 필터와 BM25·이웃·제목 청크 SQL에서 모두 `scope`와 `ownerId`를 제한한다. DB 전환과 복구 절차는 [로컬 런북](../runbooks/SpringRagLocalV0_1_0.md)을 따른다.
 
 HTML 수집에서는 선택한 블록 요소의 중첩 자식 텍스트를 다시 읽지 않고, 같은 HTML 문서 안에서 `section` 제목과 본문이 모두 동일한 절은 한 번만 색인한다. 내용이 다른 동명 절은 유지한다. 기존 색인에는 자동 적용되지 않는다.
 

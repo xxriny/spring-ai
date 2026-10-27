@@ -28,6 +28,7 @@ import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.springframework.mock.web.MockMultipartFile;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.tokenizer.JTokkitTokenCountEstimator;
@@ -88,6 +89,87 @@ class KnowledgeExtractionTest {
         assertTrue(added.stream().allMatch(chunk -> "TABLE_ROW".equals(chunk.getMetadata().get("contentType"))));
         assertTrue(added.stream().allMatch(chunk -> chunk.getText().startsWith("페이지 1 · 표 1 · 행 1\n| 항목 | 내용 |")));
         assertTrue(added.stream().allMatch(chunk -> chunk.getText().contains("| description |")));
+    }
+
+    @Test @DisplayName("긴 PDF 표 열 제목도 유실 없이 800토큰 청크로 등록한다")
+    void longPdfTableHeaderIsSplitWithoutDroppingCell() throws Exception {
+        List<Document> added = new ArrayList<>();
+        var repository = new KnowledgeDao(new JdbcTemplate()) {
+            @Override public void save(UUID id, boolean existing, String scope, String owner, String title, String url,
+                                String path, String hash, String category, List<String> chunkIds) {}
+        };
+        String header = IntStream.range(0, 1200).mapToObj(i -> "heading" + i).collect(Collectors.joining(" "));
+        String markdown = "| " + header + " |\n| --- |\n| 승인 기준 |";
+        PdfExtractionClient pdf = bytes -> List.of(new PdfPageDto(1, "", false,
+            List.of(new PdfTableRowDto(1, 1, List.of(header), List.of("승인 기준"), markdown, "COMPLETE"))));
+        var service = new KnowledgeService(repository, vectors(added, new ArrayList<>()), transaction(),
+            tempDir.toString(), image -> { throw new AssertionError("OCR must not run"); }, pdf);
+
+        service.upload(new MockMultipartFile("file", "table.pdf", "application/pdf", new byte[] {1}), "Guide", "alice", false);
+
+        assertTrue(added.size() > 1);
+        var counter = new JTokkitTokenCountEstimator();
+        assertTrue(added.stream().allMatch(chunk -> counter.estimate(chunk.getText()) <= 800));
+        assertTrue(added.stream().anyMatch(chunk -> chunk.getText().contains("heading0")));
+        assertTrue(added.stream().anyMatch(chunk -> chunk.getText().contains("heading1199")));
+        assertTrue(added.stream().anyMatch(chunk -> chunk.getText().contains("승인 기준")));
+        assertTrue(added.stream().allMatch(chunk -> "TABLE_ROW".equals(chunk.getMetadata().get("contentType"))));
+    }
+
+    @Test @DisplayName("같은 PDF 표의 긴 열 제목은 여러 행에서도 한 번만 색인한다")
+    void longPdfTableHeaderIsIndexedOncePerTable() throws Exception {
+        List<Document> added = new ArrayList<>();
+        var repository = new KnowledgeDao(new JdbcTemplate()) {
+            @Override public void save(UUID id, boolean existing, String scope, String owner, String title, String url,
+                                String path, String hash, String category, List<String> chunkIds) {}
+        };
+        String header = IntStream.range(0, 1200).mapToObj(i -> "heading" + i).collect(Collectors.joining(" "));
+        List<PdfTableRowDto> rows = IntStream.rangeClosed(1, 3)
+            .mapToObj(i -> new PdfTableRowDto(1, i, List.of(header), List.of("값" + i),
+                "| " + header + " |\n| --- |\n| 값" + i + " |", "COMPLETE"))
+            .toList();
+        PdfExtractionClient pdf = bytes -> List.of(new PdfPageDto(1, "", false, rows));
+        var service = new KnowledgeService(repository, vectors(added, new ArrayList<>()), transaction(),
+            tempDir.toString(), image -> { throw new AssertionError("OCR must not run"); }, pdf);
+
+        service.upload(new MockMultipartFile("file", "table.pdf", "application/pdf", new byte[] {1}), "Guide", "alice", false);
+
+        assertEquals(1, added.stream().filter(chunk -> chunk.getText().contains("heading1199")).count());
+        assertTrue(added.stream().anyMatch(chunk -> chunk.getText().contains("값1")));
+        assertTrue(added.stream().anyMatch(chunk -> chunk.getText().contains("값2")));
+        assertTrue(added.stream().anyMatch(chunk -> chunk.getText().contains("값3")));
+        assertTrue(added.stream().anyMatch(chunk -> chunk.getText().contains("| 열 1 제목 |")));
+        assertTrue(added.stream().anyMatch(chunk -> chunk.getText().contains("| 열 1 내용 |")));
+        assertTrue(added.stream().filter(chunk -> chunk.getText().contains("| 열 1 제목 |"))
+            .allMatch(chunk -> "HEADER".equals(chunk.getMetadata().get("tablePart"))));
+        assertTrue(added.stream().filter(chunk -> chunk.getText().contains("| 열 1 내용 |"))
+            .allMatch(chunk -> "CELL".equals(chunk.getMetadata().get("tablePart"))
+                && Integer.valueOf(1).equals(chunk.getMetadata().get("columnIndex"))));
+    }
+
+    @Test @DisplayName("행 전체가 800토큰 이하라도 긴 열 제목은 표에서 한 번만 색인한다")
+    void nearLimitTableHeaderIsNotRepeated() throws Exception {
+        List<Document> added = new ArrayList<>();
+        var repository = new KnowledgeDao(new JdbcTemplate()) {
+            @Override public void save(UUID id, boolean existing, String scope, String owner, String title, String url,
+                                String path, String hash, String category, List<String> chunkIds) {}
+        };
+        String header = "word ".repeat(740);
+        List<PdfTableRowDto> rows = IntStream.rangeClosed(1, 3)
+            .mapToObj(i -> new PdfTableRowDto(1, i, List.of(header), List.of("값" + i),
+                "| " + header + " |\n| --- |\n| 값" + i + " |", "COMPLETE"))
+            .toList();
+        var counter = new JTokkitTokenCountEstimator();
+        assertTrue(counter.estimate(rows.get(0).markdown()) <= 800);
+        assertTrue(counter.estimate("페이지 1 · 표 1 · 행 1\n| 항목 | 내용 |\n| --- | --- |\n| " + header + " | ") > 700);
+        PdfExtractionClient pdf = bytes -> List.of(new PdfPageDto(1, "", false, rows));
+        var service = new KnowledgeService(repository, vectors(added, new ArrayList<>()), transaction(),
+            tempDir.toString(), image -> { throw new AssertionError("OCR must not run"); }, pdf);
+
+        service.upload(new MockMultipartFile("file", "table.pdf", "application/pdf", new byte[] {1}), "Guide", "alice", false);
+
+        assertEquals(1, added.stream().filter(chunk -> "HEADER".equals(chunk.getMetadata().get("tablePart"))).count());
+        assertEquals(3, added.stream().filter(chunk -> "CELL".equals(chunk.getMetadata().get("tablePart"))).count());
     }
 
     @Test void pdfExtractionFailureKeepsExistingIndex() {
