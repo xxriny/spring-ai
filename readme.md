@@ -55,7 +55,7 @@
    set -a
    source .env
    set +a
-   mvn spring-boot:run
+   mvn -pl backend spring-boot:run
    ```
 
 5. 별도 터미널에서 화면을 시작합니다.

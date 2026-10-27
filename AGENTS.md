@@ -18,7 +18,7 @@
 - DB Compose와 로컬 OCR·리랭커 실행 파일은 최상위 `infrastructure/`에서 관리한다. Java 외부 연동 코드는 `dev.springrag.infrastructure` 패키지에 둔다.
 - 백엔드 코드는 서비스 경계(예: `chat`, `knowledge`, `retrieval`, `crawl`)별로 묶고, 각 서비스 안에서 필요한 `controller`, `dto`, `service`, `dao` 역할을 구분한다. 공통 설정과 외부 연동 코드는 공유가 필요한 범위에만 둔다.
 - Controller는 HTTP·인증 주체·DTO를, Service는 비즈니스 규칙을, DAO는 데이터 접근을 담당한다. 프런트엔드의 화면과 API 호출 코드는 백엔드 패키지에 섞지 않는다.
-- 현재 백엔드는 저장소 루트 `src/`의 계층별 패키지에 있다. 위 구조로 전환하는 작업에서는 기존 API와 데이터 동작을 보존하고 관련 테스트·문서를 함께 옮긴다.
+- 백엔드 구현은 `backend/src/`의 서비스별 패키지에 둔다. 업무 모듈은 저장소·외부 호출 포트에 의존하고 JDBC·벡터·HTTP 연동 구현은 어댑터로 둔다. 패키지나 모듈을 추가로 옮길 때도 기존 API와 데이터 동작을 보존하고 관련 테스트·문서를 함께 갱신한다.
 
 ## 문서
 

@@ -1,17 +1,17 @@
 # Spring RAG 아키텍처 (현행 구현)
 
-기준: 2026-10-26 저장소 코드. 이 문서는 실행 중인 구성과 코드 경계를 설명한다. 검색 API와 Ollama 생성 모델을 사용하는 대화 API가 있다.
+기준: 2026-10-27 저장소 코드. 이 문서는 실행 중인 구성과 코드 경계를 설명한다. 검색 API와 Ollama 생성 모델을 사용하는 대화 API가 있다.
 
 ## 코드와 실행 단위
 
 | 위치 | 역할 |
 | --- | --- |
 | [`frontend/`](../frontend/) | React 19·TypeScript·Vite 화면. `src/main.tsx`가 로그인, 대화, 문서 목록·업로드·수집 UI와 API 호출을 담당한다. 업로드 상태·완료 알림과 현재 범위의 카테고리별 문서 묶음·필터는 화면 상태로 처리한다. 범위 전환 직후에도 목록은 선택 범위로 제한하며, 관리자의 업로드 카테고리 추천에는 공용 문서의 이름을 사용한다. 개발 서버는 `/api`를 Spring Boot로 프록시한다. |
-| [`src/main/java/dev/springrag/`](../src/main/java/dev/springrag/) | Spring Boot 4·Spring AI 2 백엔드. MVC 서버에서 WebFlux `Flux`를 채팅 NDJSON 스트림으로 변환한다. 현재는 저장소 루트 Maven 모듈 안에 `controller`, `dto`, `service`, `dao`, `config`, `infrastructure` 패키지를 둔다. |
+| [`backend/`](../backend/) | Spring Boot 4·Spring AI 2 백엔드 Maven 모듈. 루트 POM은 백엔드 모듈을 집계한다. MVC 서버에서 WebFlux `Flux`를 채팅 NDJSON 스트림으로 변환한다. 업무별 `chat`, `knowledge`, `retrieval`, `crawl` 패키지 안에 필요한 Controller·DTO·Service·DAO·Port를 둔다. 공통 설정·오류와 공유 벡터 포트는 `common`, 외부 연동 구현은 `dev.springrag.infrastructure`에 둔다. |
 | [`infrastructure/`](../infrastructure/) | PostgreSQL/ParadeDB Compose, 로컬 Python PDF 추출·OCR 서버, 로컬 Qwen 리랭커 서버. Compose가 시작하는 서비스는 DB뿐이다. |
 | [`evaluation/`](../evaluation/) | 공식 문서 4쪽·16문항 검색 평가. 원시 결과는 Git 제외 `evaluation/results/`에 남긴다. |
 
-`AGENTS.md`의 서비스별 백엔드 패키지 및 `backend/` 모듈은 목표 구조다. 현재 코드가 그 구조로 이동한 것은 아니다. Springdoc OpenAPI 3.0.3이 `/swagger-ui.html`과 `/v3/api-docs`를 제공하며 두 경로에도 HTTP Basic 인증이 필요하다.
+백엔드는 단일 Spring Boot 프로세스로 배포한다. Springdoc OpenAPI 3.0.3이 `/swagger-ui.html`과 `/v3/api-docs`를 제공하며 두 경로에도 HTTP Basic 인증이 필요하다.
 
 ```mermaid
 flowchart LR
@@ -22,7 +22,7 @@ flowchart LR
     C --> R
     K -->|"원본 파일"| FS[(UPLOAD_DIR)]
     K -->|"PDF 본문·표 / OCR"| PDF["Python PDF·OCR :8092"]
-    K -->|"임베딩"| VS["Spring AI VectorStore"]
+    K -->|"VectorIndex / 임베딩"| VS["SpringAiVectorIndex<br/>Spring AI VectorStore"]
     VS -->|"EmbeddingModel"| OL["Ollama qwen3-embedding:8b"]
     K --> KD["KnowledgeDao"]
     R --> VS
@@ -38,12 +38,12 @@ flowchart LR
     CM --> DB
 ```
 
-컨트롤러는 `SystemController`(상태·로그인 정보), `KnowledgeController`(문서), `CrawlController`(URL 수집), `SearchController`(검색), `ChatController`(대화)로 나뉜다. 각 컨트롤러는 인증 주체와 요청·응답 DTO를 다루며 `ApiExceptionHandler`가 공통 오류 응답을 처리한다. 서비스는 수집·검색·대화 규칙을, DAO는 직접 SQL을 담당한다. 벡터 읽기·쓰기는 예외적으로 서비스가 Spring AI `VectorStore`를 통해 수행한다. Java 외부 HTTP 연동은 `service`의 인터페이스와 `infrastructure`의 구현으로 나뉜다.
+컨트롤러는 `SystemController`(상태·로그인 정보), `KnowledgeController`(문서), `CrawlController`(URL 수집), `SearchController`(검색), `ChatController`(대화)로 나뉜다. 각 컨트롤러는 인증 주체와 요청·응답 DTO를 다루며 `ApiExceptionHandler`가 공통 오류 응답을 처리한다. 서비스는 수집·검색·대화 규칙을, DAO는 직접 SQL을 담당한다. `ChatRepository`, `KnowledgeRepository`, `RetrievalDao`는 업무 모듈의 저장 포트이며 기존 JDBC DAO가 이를 구현한다. `OcrClient`, `PdfExtractionClient`, `Reranker`는 업무별 외부 호출 포트다. 문서 색인과 검색은 공유 `VectorIndex` 포트를 사용하고 `SpringAiVectorIndex`가 Spring AI `VectorStore`에 연결한다. 업무 모듈 간 호출은 `chat → retrieval`, `crawl → knowledge`이다.
 
 ## 문서 수집과 색인
 
 1. 관리자의 파일 업로드는 `SHARED`, 사용자의 업로드는 `PRIVATE`로 저장된다. 관리자만 `/api/admin/crawl`로 URL을 수집한다. 크롤러는 시작 URL과 같은 스킴·호스트·경로 하위만 방문하고 최대 100쪽을 동기 처리한다.
-2. [`KnowledgeService`](../src/main/java/dev/springrag/service/KnowledgeService.java)가 TXT는 `TextReader`, DOC/DOCX는 Tika, HTML은 JSoup으로 추출한다. HTML에서는 레이아웃 요소와 중첩 텍스트 반복, 동일 제목·본문 절의 중복을 제거한다. PDF는 Python `pdfplumber` 서비스가 머리말·꼬리말을 정리하고 표 행을 Markdown으로 분리한다. 본문과 표 행이 모두 없는 페이지에만 PaddleOCR을 적용한다.
+2. [`KnowledgeService`](../backend/src/main/java/dev/springrag/knowledge/service/KnowledgeService.java)가 TXT는 `TextReader`, DOC/DOCX는 Tika, HTML은 JSoup으로 추출한다. HTML에서는 레이아웃 요소와 중첩 텍스트 반복, 동일 제목·본문 절의 중복을 제거한다. PDF는 Python `pdfplumber` 서비스가 머리말·꼬리말을 정리하고 표 행을 Markdown으로 분리한다. 본문과 표 행이 모두 없는 페이지에만 PaddleOCR을 적용한다.
 3. 본문은 `TokenTextSplitter`의 700토큰 청크를 기준으로 나누고, 같은 추출 단위 안의 연속 청크에 이전 내용 최대 100토큰을 겹친다. 최종 청크는 최대 800토큰이다. 표 행은 별도 청크로 저장하며 오버랩을 적용하지 않는다. 긴 표 셀은 여러 청크로 나누고, 긴 열 제목은 페이지·표·열마다 한 번만 저장한다. 이후 행의 셀은 같은 열 번호를 표시하며 각 청크는 800토큰 이하다.
 4. Ollama `qwen3-embedding:8b`에서 1536차원 벡터를 만들어 `vector_store`에 본문·벡터·메타데이터를 함께 적재한다. `knowledge_document`와 `knowledge_chunk`가 원본 문서 및 청크 ID를 관리한다. 파일 원본은 `UPLOAD_DIR`에 둔다. URL은 원문 SHA-256과 카테고리가 같으면 재색인을 건너뛴다.
 
@@ -60,7 +60,7 @@ flowchart LR
 
 응답에는 `vectorCandidates`, `bm25Candidates`, `candidates`, `reranked`, `passages`가 각각 담긴다. 후보가 없으면 리랭커를 호출하지 않는다. 상세 응답 필드와 오류 형식은 [하이브리드 검색 명세](HybridRetrieval.md)를 따른다.
 
-[`ChatService`](../src/main/java/dev/springrag/service/ChatService.java)는 대화의 소유권·고정 검색 범위를 확인한다. 이전 메시지가 있으면 Ollama `qwen3.5:9b`로 후속 질문을 독립 검색어로 바꾸고, 위 검색의 **최종 passage**만 답변 근거로 보낸다. `MessageChatMemoryAdvisor`와 최대 20메시지 창을 사용한다. 독립 검색 API는 생성 모델을 호출하지 않는다. MultiQueryExpander와 모델 기반 passage 요약은 아직 구현되지 않았다.
+[`ChatService`](../backend/src/main/java/dev/springrag/chat/service/ChatService.java)는 대화의 소유권·고정 검색 범위를 확인한다. 이전 메시지가 있으면 Ollama `qwen3.5:9b`로 후속 질문을 독립 검색어로 바꾸고, 위 검색의 **최종 passage**만 답변 근거로 보낸다. `MessageChatMemoryAdvisor`와 최대 20메시지 창을 사용한다. 독립 검색 API는 생성 모델을 호출하지 않는다. MultiQueryExpander와 모델 기반 passage 요약은 아직 구현되지 않았다.
 
 채팅의 `/messages/stream`은 Spring AI `ChatClient.stream().content()`의 `Flux`를 NDJSON 이벤트로 내보낸다. React는 출처와 답변 조각을 순서대로 표시하고 `done`을 확인한다. 검색·JDBC 단계는 기존 동기식 경계를 유지하며 완료된 답변만 `chat_message`에 저장한다. `spring-boot-starter-webflux`를 사용해도 웹 서버는 현재 Spring MVC이며, 전체 백엔드가 비차단 WebFlux로 전환된 것은 아니다. 기존 `/messages` JSON 응답은 계속 제공한다.
 

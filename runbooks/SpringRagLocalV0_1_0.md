@@ -148,14 +148,14 @@ python infrastructure/ocr/server.py
 
 ### 5. Spring Boot와 화면
 
-백엔드 터미널에서 환경 변수를 설정하고 시작한다. 예를 들어 Git에서 제외된 `.env`에 `APP_ADMIN_PASSWORD`, `APP_USER_PASSWORD`를 각 한 줄씩 `이름=값` 형식으로 저장한다. 파일 권한을 제한하고, 실제 값을 터미널 명령에 직접 입력하지 않는다.
+백엔드 터미널에서 환경 변수를 설정하고 시작한다. 예를 들어 Git에서 제외된 `.env`에 `APP_ADMIN_PASSWORD`, `APP_USER_PASSWORD`를 각 한 줄씩 `이름=값` 형식으로 저장한다. 파일 권한을 제한하고, 실제 값을 터미널 명령에 직접 입력하지 않는다. Maven 플러그인의 작업 디렉터리는 저장소 루트로 고정되어 기본 `./data/uploads`가 기존 원본 경로를 가리킨다. JAR을 직접 실행할 때도 저장소 루트에서 시작하거나 `UPLOAD_DIR`에 절대 경로를 지정한다.
 
 ```bash
 chmod 600 .env
 set -a
 source .env
 set +a
-mvn spring-boot:run
+mvn -pl backend spring-boot:run
 ```
 
 화면은 별도 터미널에서 시작한다.
