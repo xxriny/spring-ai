@@ -3,6 +3,7 @@ package dev.springrag.controller;
 import dev.springrag.dto.ErrorDto;
 import dev.springrag.service.ChatService;
 import dev.springrag.service.OcrClient;
+import dev.springrag.service.PdfExtractionClient;
 import dev.springrag.service.Reranker;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -54,5 +55,16 @@ public class ApiExceptionHandler {
     public ResponseEntity<ErrorDto> ocrUnavailable() {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
             .body(new ErrorDto("OCR을 사용할 수 없습니다."));
+    }
+
+    /**
+     * PDF 추출 서버 장애를 서비스 불가로 응답한다.
+     *
+     * @return HTTP 503 응답
+     */
+    @ExceptionHandler(PdfExtractionClient.PdfExtractionUnavailableException.class)
+    public ResponseEntity<ErrorDto> pdfExtractionUnavailable() {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+            .body(new ErrorDto("PDF 추출 서비스를 사용할 수 없습니다."));
     }
 }

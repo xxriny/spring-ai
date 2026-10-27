@@ -68,13 +68,14 @@ public class KnowledgeController {
      * @return 등록된 문서 정보
      * @throws IOException 파일을 읽거나 저장할 수 없는 경우
      * @throws IllegalArgumentException 파일 형식이나 카테고리가 올바르지 않은 경우
+     * @throws dev.springrag.service.PdfExtractionClient.PdfExtractionUnavailableException PDF 추출 서버를 사용할 수 없는 경우
     */
     @Operation(summary = "문서 파일 등록")
     @ApiResponses({
         @ApiResponse(responseCode = "200", description = "등록된 문서 정보"),
         @ApiResponse(responseCode = "400", description = "파일 또는 카테고리 오류", content = @Content(schema = @Schema(implementation = ErrorDto.class))),
         @ApiResponse(responseCode = "401", description = "인증 필요"),
-        @ApiResponse(responseCode = "503", description = "OCR 사용 불가", content = @Content(schema = @Schema(implementation = ErrorDto.class)))
+        @ApiResponse(responseCode = "503", description = "PDF 추출 또는 OCR 사용 불가", content = @Content(schema = @Schema(implementation = ErrorDto.class)))
     })
     @PostMapping public DocumentDto upload(Authentication auth,
         @Parameter(description = "TXT, PDF, DOC, DOCX, HTML 파일") @RequestParam MultipartFile file,

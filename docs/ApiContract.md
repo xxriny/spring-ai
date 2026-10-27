@@ -4,7 +4,7 @@
 
 - 기본 주소는 `http://localhost:8080`이다. `/api/health` 외의 공개 API와 `/v3/api-docs`, `/swagger-ui.html`에는 HTTP Basic 인증이 필요하다. 관리자 전용 경로는 `/api/admin/**`이다.
 - `SHARED`는 공용 문서, `PRIVATE`는 인증된 본인 문서다. 개인 문서 소유자는 요청값이 아닌 로그인 계정에서 결정한다. 대화 범위는 생성할 때 고정한다.
-- 검증·소유권 오류는 `400 {"error":"설명"}`, 인증 실패는 `401`, 관리자 권한 부족은 `403`이다. 리랭커·OCR·생성 모델을 사용할 수 없으면 해당 경로에서 `503 {"error":"설명"}`을 반환한다. 모든 API 응답의 `X-Trace-Id`로 요청 로그를 연결한다.
+- 검증·소유권 오류는 `400 {"error":"설명"}`, 인증 실패는 `401`, 관리자 권한 부족은 `403`이다. PDF 추출·OCR·리랭커·생성 모델을 사용할 수 없으면 해당 경로에서 `503 {"error":"설명"}`을 반환한다. 모든 API 응답의 `X-Trace-Id`로 요청 로그를 연결한다.
 - 실행 중 생성된 OpenAPI JSON은 `/v3/api-docs`, Swagger UI는 `/swagger-ui.html`에 있다.
 
 ## 엔드포인트
@@ -35,4 +35,4 @@
 - `SearchResultDto`: `vectorCandidates`, `bm25Candidates`, `candidates`, `reranked`, `passages` 배열. 항목별 점수·순위·출처 필드와 검색 단계는 [하이브리드 검색 명세](HybridRetrieval.md)에 있다.
 - 스트림은 줄마다 JSON 이벤트 하나다. `sources` 이벤트가 먼저 오고, `delta` 이벤트의 `text`를 이어 붙이며, `done`이 저장 완료를 알린다. 예: `{"type":"sources","text":null,"sources":[]}` → `{"type":"delta","text":"답변","sources":null}` → `{"type":"done","text":null,"sources":null}`. 완료 전에 연결이 끊기거나 생성이 실패하면 `done`이 없고 화면용 답변은 저장하지 않는다. 스트림 시작 후 오류는 HTTP 상태를 바꿀 수 없으므로 클라이언트는 `done` 누락을 실패로 처리해야 한다.
 
-내부 PDF 추출 서비스의 `/pdf/extract`는 공개 API가 아니다. Spring Boot가 `application/pdf` 원본 바이트(최대 20MB)를 보내고 `pages[]`의 `pageNumber`, `body`, `ocrRequired`, `tables[]`와 각 표의 `tableIndex`, `rows[]`(`rowIndex`, `headers`, `cells`, `markdown`, `extractionStatus`)를 받는다. 형식 오류·장애 시 등록이 실패하며 원문은 오류 로그에 남기지 않는다.
+내부 PDF 추출 서비스의 `/pdf/extract`는 공개 API가 아니다. Spring Boot가 `application/pdf` 원본 바이트(최대 20MB)를 보내고 `pages[]`의 `pageNumber`, `body`, `ocrRequired`, `tables[]`와 각 표의 `tableIndex`, `rows[]`(`rowIndex`, `headers`, `cells`, `markdown`, `extractionStatus`)를 받는다. 서버 연결 실패·HTTP 오류 시 등록은 `503 {"error":"PDF 추출 서비스를 사용할 수 없습니다."}`로 실패하며 원문은 오류 로그에 남기지 않는다.
