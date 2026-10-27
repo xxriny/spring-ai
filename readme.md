@@ -1,4 +1,4 @@
-# Spring RAG 챗봇
+# Spring AI RAG 챗봇
 
 ## 프로젝트 개요
 
