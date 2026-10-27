@@ -144,7 +144,7 @@ python -m pip install -r infrastructure/ocr/requirements.txt
 python infrastructure/ocr/server.py
 ```
 
-서버는 `127.0.0.1:8092`에만 바인딩한다. `nc -z 127.0.0.1 8092`는 포트 접속만 확인하며 PDF 추출·한글 인식 품질을 보증하지 않는다. PDF 추출 요청은 `application/pdf` 원본 바이트로 `/pdf/extract`에 전달되며 20MB를 초과하면 거부된다. 추출 실패 시 업로드는 오류로 끝나고, URL 재수집은 기존 색인을 유지한다. 표 구조를 감지하지 못하면 페이지 본문으로 색인한다. 기존 PDF에 변경을 적용하려면 해당 문서를 삭제한 뒤 재등록한다. 이 작업은 로컬 Ollama 추론을 사용한다.
+서버는 `127.0.0.1:8092`에만 바인딩한다. `nc -z 127.0.0.1 8092`는 포트 접속만 확인하며 PDF 추출·한글 인식 품질을 보증하지 않는다. PDF 추출 요청은 `application/pdf` 원본 바이트로 `/pdf/extract`에 전달되며 20MB를 초과하면 거부된다. 추출 실패 시 업로드는 오류로 끝나고, URL 재수집은 기존 색인을 유지한다. 표 구조를 감지하지 못하면 페이지 본문으로 색인한다. 긴 표 열 제목은 페이지·표·열마다 한 번만 제목 청크로 저장하고 셀 청크에는 열 번호를 남긴다. 새 색인의 `columnIndex`·`tablePart`를 사용해 뒤쪽 행을 검색할 때도 같은 열의 제목 조각을 passage에 붙인다. 기존 PDF에 변경을 적용하려면 해당 문서를 삭제한 뒤 재등록한다. 이 작업은 로컬 Ollama 추론을 사용한다.
 
 ### 5. Spring Boot와 화면
 
@@ -265,7 +265,7 @@ docker compose -f infrastructure/compose.yaml exec -T db pg_restore --list < "$B
 | 채팅 스트림에 `done` 없음 | Ollama·리랭커 상태, `X-Trace-Id`, 대화 메시지 조회 | 연결 끊김 또는 생성 오류를 확인한다. 완료 전 답변은 화면용 기록에 저장하지 않음 |
 | 색인·검색 중 Ollama 연결/메모리 오류 | `ollama list`, Ollama 로그, `OLLAMA_BASE_URL`, 시스템 메모리 | 모델과 서버를 확인하고 메모리를 확보한 뒤 재시도 |
 | 검색에서 BM25 인덱스 오류 | `pg_search` 확장·`vector_store_bm25_idx`, DB 이미지 버전, `X-Trace-Id` | ParadeDB 0.26.0-pg17과 인덱스를 확인하고 앱 시작 로그를 조사. DB 전환 직후라면 백업·복원 확인부터 재검토 |
-| PDF 등록 오류 또는 URL 수집 `errors`에 추출·OCR 오류 | PDF 추출·PaddleOCR 프로세스 로그, `8092` 포트, `PDF_EXTRACTION_URL`, `OCR_URL` | 서버와 의존성을 복구한 뒤 재시도. 실패한 URL 재수집은 기존 색인을 유지함 |
+| PDF 등록 `503` 또는 URL 수집 `errors`에 추출·OCR 오류 | PDF 추출·PaddleOCR 프로세스 로그, `8092` 포트, `PDF_EXTRACTION_URL`, `OCR_URL` | `.venv-ocr/bin/python infrastructure/ocr/server.py`로 서버를 기동하고 재시도. 실패한 URL 재수집은 기존 색인을 유지함 |
 | 대화 질문 실패, Ollama 생성 모델 오류 | `ollama list`, Ollama 로그, `OLLAMA_CHAT_MODEL`, `OLLAMA_BASE_URL` | 생성 모델을 받은 뒤 Ollama 서버·메모리를 확인하고 재시도. 독립 `/api/search`로 검색 경로 분리 확인 |
 | 색인·검색 중 Ollama/DB 오류 | 백엔드 로그, `ollama list`, `OLLAMA_BASE_URL`, DB 상태 | 원인 복구 후 재시도. 변경 URL 재수집 실패 시 기존 카탈로그·청크가 유지되도록 구현됨. 조회로 확인 |
 | 수집 `indexed=0` 또는 `errors` 발생 | URL별 HTTP 상태, 경로 범위, 리다이렉트, 파일 형식 | 오류 URL만 재시도. 동일 URL·동일 내용은 중복 색인하지 않음 |

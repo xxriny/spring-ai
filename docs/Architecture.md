@@ -6,7 +6,7 @@
 
 | 위치 | 역할 |
 | --- | --- |
-| [`frontend/`](../frontend/) | React 19·TypeScript·Vite 화면. `src/main.tsx`가 로그인, 대화, 문서 목록·업로드·수집 UI와 API 호출을 담당한다. 개발 서버는 `/api`를 Spring Boot로 프록시한다. |
+| [`frontend/`](../frontend/) | React 19·TypeScript·Vite 화면. `src/main.tsx`가 로그인, 대화, 문서 목록·업로드·수집 UI와 API 호출을 담당한다. 업로드 상태·완료 알림과 현재 범위의 카테고리별 문서 묶음·필터는 화면 상태로 처리한다. 범위 전환 직후에도 목록은 선택 범위로 제한하며, 관리자의 업로드 카테고리 추천에는 공용 문서의 이름을 사용한다. 개발 서버는 `/api`를 Spring Boot로 프록시한다. |
 | [`src/main/java/dev/springrag/`](../src/main/java/dev/springrag/) | Spring Boot 4·Spring AI 2 백엔드. MVC 서버에서 WebFlux `Flux`를 채팅 NDJSON 스트림으로 변환한다. 현재는 저장소 루트 Maven 모듈 안에 `controller`, `dto`, `service`, `dao`, `config`, `infrastructure` 패키지를 둔다. |
 | [`infrastructure/`](../infrastructure/) | PostgreSQL/ParadeDB Compose, 로컬 Python PDF 추출·OCR 서버, 로컬 Qwen 리랭커 서버. Compose가 시작하는 서비스는 DB뿐이다. |
 | [`evaluation/`](../evaluation/) | 공식 문서 4쪽·16문항 검색 평가. 원시 결과는 Git 제외 `evaluation/results/`에 남긴다. |
@@ -44,10 +44,10 @@ flowchart LR
 
 1. 관리자의 파일 업로드는 `SHARED`, 사용자의 업로드는 `PRIVATE`로 저장된다. 관리자만 `/api/admin/crawl`로 URL을 수집한다. 크롤러는 시작 URL과 같은 스킴·호스트·경로 하위만 방문하고 최대 100쪽을 동기 처리한다.
 2. [`KnowledgeService`](../src/main/java/dev/springrag/service/KnowledgeService.java)가 TXT는 `TextReader`, DOC/DOCX는 Tika, HTML은 JSoup으로 추출한다. HTML에서는 레이아웃 요소와 중첩 텍스트 반복, 동일 제목·본문 절의 중복을 제거한다. PDF는 Python `pdfplumber` 서비스가 머리말·꼬리말을 정리하고 표 행을 Markdown으로 분리한다. 본문과 표 행이 모두 없는 페이지에만 PaddleOCR을 적용한다.
-3. 본문은 `TokenTextSplitter`의 700토큰 청크를 기준으로 나누고, 같은 추출 단위 안의 연속 청크에 이전 내용 최대 100토큰을 겹친다. 최종 청크는 최대 800토큰이다. 표 행은 별도 청크로 저장하며 오버랩을 적용하지 않는다.
+3. 본문은 `TokenTextSplitter`의 700토큰 청크를 기준으로 나누고, 같은 추출 단위 안의 연속 청크에 이전 내용 최대 100토큰을 겹친다. 최종 청크는 최대 800토큰이다. 표 행은 별도 청크로 저장하며 오버랩을 적용하지 않는다. 긴 표 셀은 여러 청크로 나누고, 긴 열 제목은 페이지·표·열마다 한 번만 저장한다. 이후 행의 셀은 같은 열 번호를 표시하며 각 청크는 800토큰 이하다.
 4. Ollama `qwen3-embedding:8b`에서 1536차원 벡터를 만들어 `vector_store`에 본문·벡터·메타데이터를 함께 적재한다. `knowledge_document`와 `knowledge_chunk`가 원본 문서 및 청크 ID를 관리한다. 파일 원본은 `UPLOAD_DIR`에 둔다. URL은 원문 SHA-256과 카테고리가 같으면 재색인을 건너뛴다.
 
-공통 청크 메타데이터는 `documentId`, `scope`, `ownerId`, `title`, `source`, `category`, `chunkOrder`, `embeddingModel`이다. HTML에는 `section`, PDF에는 `page_number`·`contentType`, 표 행에는 `tableIndex`·`rowIndex`·`tableExtractionStatus`가 붙는다. 적재 실패 시 새 벡터 삭제를 시도하며, 기존 URL 갱신은 문서 ID를 유지하고 청크를 교체한다.
+공통 청크 메타데이터는 `documentId`, `scope`, `ownerId`, `title`, `source`, `category`, `chunkOrder`, `embeddingModel`이다. HTML에는 `section`, PDF에는 `page_number`·`contentType`, 표 행에는 `tableIndex`·`rowIndex`·`tableExtractionStatus`가 붙는다. 긴 표 제목과 셀 조각에는 `columnIndex`와 `tablePart=HEADER|CELL`도 붙여 같은 열을 연결한다. 적재 실패 시 새 벡터 삭제를 시도하며, 기존 URL 갱신은 문서 ID를 유지하고 청크를 교체한다.
 
 ## 검색과 답변
 
@@ -56,7 +56,7 @@ flowchart LR
 1. `scope=SHARED|PRIVATE`를 검증한다. `PRIVATE` 소유자는 요청 값이 아니라 인증 계정으로 정한다.
 2. pgvector 코사인 유사도 **0.3 이상 Top-10**과 `pg_search` BM25 **Top-10**을 각각 조회한다. 벡터 필터와 BM25 SQL 모두 범위·소유권을 제한한다.
 3. 청크 ID로 중복을 제거하고 RRF(`k=60`) 상위 10개를 만든다. 로컬 `Qwen/Qwen3-Reranker-0.6B`가 이를 재정렬한다.
-4. 재정렬 상위 3개 앵커마다 같은 문서·섹션·페이지·본문 유형의 앞뒤 청크를 조회한다. 표 행은 같은 표 안에서만 확장한다. 겹친 텍스트를 제거하고 passage당 최대 1,200토큰을 반환한다.
+4. 재정렬 상위 3개 앵커마다 같은 문서·섹션·페이지·본문 유형의 앞뒤 청크를 조회한다. 표 셀 앵커는 같은 문서·페이지·표·열의 긴 제목 조각도 권한 범위 안에서 조회하고, 질문과 단어가 겹치는 조각을 최대 200토큰 붙인다. 겹친 본문 텍스트를 제거하고 passage당 최대 1,200토큰을 반환한다.
 
 응답에는 `vectorCandidates`, `bm25Candidates`, `candidates`, `reranked`, `passages`가 각각 담긴다. 후보가 없으면 리랭커를 호출하지 않는다. 상세 응답 필드와 오류 형식은 [하이브리드 검색 명세](HybridRetrieval.md)를 따른다.
 
