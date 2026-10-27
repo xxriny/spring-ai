@@ -1,0 +1,128 @@
+.upload-button input {
+  display: block;
+}
+
+.category-field input:focus-visible,
+.library-toolbar select:focus-visible,
+.upload-button:focus-within {
+  outline: 2px solid #2a65a5;
+  outline-offset: 2px;
+}
+
+.upload-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 13px;
+  border-radius: 10px;
+  background: #edf4fc;
+  color: #173d71;
+  font-size: 12px;
+}
+
+.upload-progress strong,
+.upload-progress small {
+  display: block;
+}
+
+.upload-progress strong {
+  overflow-wrap: anywhere;
+}
+
+.upload-progress small {
+  margin-top: 4px;
+  color: #60758e;
+}
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border: 2px solid #b8cee8;
+  border-top-color: #174778;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; }
+}
+
+.library-toolbar {
+  margin-top: 24px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e6ebf2;
+}
+
+.library-toolbar label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.library-toolbar select {
+  max-width: 65%;
+  padding: 8px 10px;
+  border: 1px solid #dce5ef;
+  border-radius: 8px;
+  background: white;
+  color: #173d71;
+}
+
+.library-list {
+  margin-top: 0;
+  border-top: 0;
+}
+
+.category-group h3 {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 22px 0 5px;
+  color: #173d71;
+  font-size: 13px;
+}
+
+.category-group h3 small {
+  color: #8a9db4;
+  font-weight: 500;
+}
+
+.toast {
+  position: fixed;
+  top: 22px;
+  right: 22px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 13px 16px;
+  border: 1px solid #cce2d8;
+  border-radius: 12px;
+  background: #f2faf5;
+  box-shadow: 0 12px 35px #14254129;
+  color: #236448;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.toast.error {
+  border-color: #f1d0cc;
+  background: #fff6f4;
+  color: #a73e36;
+}
+
+.toast button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
