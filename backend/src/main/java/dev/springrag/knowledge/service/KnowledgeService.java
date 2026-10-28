@@ -47,6 +47,7 @@ public class KnowledgeService {
     private final Path uploadDir;
     private final OcrClient ocr;
     private final PdfExtractionClient pdfExtraction;
+    private final String embeddingModelId;
     private final TokenTextSplitter splitter = TokenTextSplitter.builder().withChunkSize(700).build();
     private final JTokkitTokenCountEstimator tokenCounter = new JTokkitTokenCountEstimator();
 
@@ -58,15 +59,32 @@ public class KnowledgeService {
      * @param uploadDir 원본 파일 저장 경로
      * @param ocr 스캔 PDF의 OCR 포트
      * @param pdfExtraction PDF 본문·표 추출 포트
+     * @param embeddingModelId 현재 색인에 사용할 모델과 차원 식별자
      */
     @Autowired public KnowledgeService(KnowledgeRepository repository, VectorIndex vectors, TransactionTemplate transaction,
-                     @Value("${app.upload-dir}") String uploadDir, OcrClient ocr, PdfExtractionClient pdfExtraction) {
+                     @Value("${app.upload-dir}") String uploadDir, OcrClient ocr, PdfExtractionClient pdfExtraction,
+                     @Value("${app.embedding-model-id}") String embeddingModelId) {
         this.repository = repository;
         this.vectors = vectors;
         this.transaction = transaction;
         this.uploadDir = Path.of(uploadDir).toAbsolutePath();
         this.ocr = ocr;
         this.pdfExtraction = pdfExtraction;
+        this.embeddingModelId = embeddingModelId;
+    }
+
+    /**
+     * 로컬 모델을 사용하는 기존 직접 호출자의 문서 색인 서비스를 연결한다.
+     * @param repository 문서 카탈로그 저장 포트
+     * @param vectors 벡터 색인 포트
+     * @param transaction 카탈로그 변경 트랜잭션
+     * @param uploadDir 원본 파일 저장 경로
+     * @param ocr OCR 포트
+     * @param pdfExtraction PDF 본문·표 추출 포트
+     */
+    public KnowledgeService(KnowledgeRepository repository, VectorIndex vectors, TransactionTemplate transaction,
+                            String uploadDir, OcrClient ocr, PdfExtractionClient pdfExtraction) {
+        this(repository, vectors, transaction, uploadDir, ocr, pdfExtraction, LocalEmbeddingConfig.EMBEDDING_ID);
     }
 
     /**
@@ -158,7 +176,7 @@ public class KnowledgeService {
             metadata.put("title", title);
             metadata.put("source", sourceUrl == null ? "upload" : sourceUrl);
             metadata.put("category", category);
-            metadata.put("embeddingModel", LocalEmbeddingConfig.EMBEDDING_ID);
+            metadata.put("embeddingModel", embeddingModelId);
             String previous = null;
             List<Document> pageChunks = "TABLE_ROW".equals(metadata.get("contentType"))
                 ? List.of(new Document(page.getText(), metadata))

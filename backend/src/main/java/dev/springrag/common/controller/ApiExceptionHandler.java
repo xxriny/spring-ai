@@ -2,6 +2,8 @@ package dev.springrag.common.controller;
 
 import dev.springrag.common.dto.ErrorDto;
 import dev.springrag.chat.service.ChatService;
+import dev.springrag.chat.service.VisitorRateLimitException;
+import dev.springrag.chat.service.VisitorUnauthorizedException;
 import dev.springrag.knowledge.port.OcrClient;
 import dev.springrag.knowledge.port.PdfExtractionClient;
 import dev.springrag.retrieval.port.Reranker;
@@ -13,6 +15,23 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 /** 컨트롤러에서 전파된 검증·외부 서비스 오류를 공통 HTTP 응답으로 바꾼다. */
 @RestControllerAdvice
 public class ApiExceptionHandler {
+    /**
+     * 방문자 토큰 오류를 인증 실패로 응답한다.
+     * @return HTTP 401 응답
+     */
+    @ExceptionHandler(VisitorUnauthorizedException.class)
+    public ResponseEntity<ErrorDto> visitorUnauthorized() {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(new ErrorDto("방문자 세션이 없거나 만료되었습니다."));
+    }
+
+    /**
+     * 방문자 일일 사용 한도 초과를 응답한다.
+     * @return HTTP 429 응답
+     */
+    @ExceptionHandler(VisitorRateLimitException.class)
+    public ResponseEntity<ErrorDto> visitorRateLimited() {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(new ErrorDto("오늘의 공개 체험 한도를 모두 사용했습니다."));
+    }
     /**
      * 요청 값과 소유권 검증 오류를 API 오류 형식으로 변환한다.
      *

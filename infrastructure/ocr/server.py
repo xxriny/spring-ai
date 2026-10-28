@@ -4,6 +4,7 @@ import base64
 import binascii
 import io
 import json
+import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from pdf_extract import extract_pdf
@@ -34,6 +35,13 @@ def extract_pdf_request(content_type, body):
 
 def handler(predict, decode_image):
     class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path != '/health':
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.end_headers()
+
         def do_POST(self):
             if self.path not in ('/ocr', '/pdf/extract'):
                 self.send_error(404)
@@ -75,7 +83,7 @@ def main():
         with Image.open(io.BytesIO(data)) as image:
             return np.asarray(image.convert('RGB'))
 
-    HTTPServer(('127.0.0.1', 8092), handler(model.predict, decode_image)).serve_forever()
+    HTTPServer((os.getenv('SERVICE_HOST', '127.0.0.1'), 8092), handler(model.predict, decode_image)).serve_forever()
 
 
 if __name__ == '__main__':

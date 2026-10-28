@@ -1,10 +1,20 @@
 import json
 import unittest
 
-from server import rerank
+from server import rerank, handler
 
 
 class RerankTest(unittest.TestCase):
+    def test_health_is_ready_after_model_load(self):
+        endpoint_type = handler(lambda pairs: [])
+        endpoint = endpoint_type.__new__(endpoint_type)
+        codes = []
+        endpoint.path = '/health'
+        endpoint.send_response = codes.append
+        endpoint.end_headers = lambda: None
+        endpoint.do_GET()
+        self.assertEqual([200], codes)
+
     def test_scores_follow_input_order(self):
         result = rerank({'query': 'q', 'documents': ['a', 'b']},
                         lambda pairs: [2.0, -1.0])

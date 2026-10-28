@@ -7,8 +7,8 @@
 - 백엔드: Java 17, Spring Boot 4.0.0, Spring AI 2.0.1, Spring MVC, Spring WebFlux(Reactor `Flux` 채팅 스트림), Spring Security, Spring JDBC, Springdoc OpenAPI 3.0.3(Swagger UI), Spring AI 문서 리더(Tika·JSoup), PDFBox, Python pdfplumber 0.11, Maven.
 - 프런트엔드: React 19, TypeScript 5, Vite 7.
 - 데이터: PostgreSQL 17(ParadeDB 0.26.0-pg17), pgvector, pg_search(BM25), Spring AI JDBC Chat Memory.
-- AI: Ollama `qwen3-embedding:8b`(1536차원)·`qwen3.5:9b`(생성), 로컬 `Qwen/Qwen3-Reranker-0.6B`(Python, sentence-transformers, CPU 추론), 로컬 PaddleOCR 한국어 PP-OCRv5.
-- 로컬 실행·검증: Docker Compose, JUnit, Testcontainers, Python unittest.
+- AI: 로컬 Ollama `qwen3-embedding:8b`(1536차원)·`qwen3.5:9b`(생성), GCP 프로필 Spring AI Google GenAI/Vertex AI `gemini-embedding-001`(1536차원)·`gemini-3.5-flash-lite`(생성, 실호출 미검증), 로컬 `Qwen/Qwen3-Reranker-0.6B`(Python, sentence-transformers, CPU 추론), 로컬 PaddleOCR 한국어 PP-OCRv5.
+- 실행·검증: 로컬 Docker Compose, GCP VM용 Docker Compose·Caddy 2, JUnit, Testcontainers, Python unittest.
 
 이 목록은 현재 구현의 기록이며 기술 도입을 제한하지 않는다. 새 기술을 추가하거나 버전을 바꾸면 실제 설정과 이 목록을 함께 갱신한다.
 

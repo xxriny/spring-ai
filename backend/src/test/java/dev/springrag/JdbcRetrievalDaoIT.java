@@ -13,6 +13,25 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
 class JdbcRetrievalDaoIT {
+    @Test @DisplayName("배포 색인은 로컬 Ollama 벡터를 거절하고 Vertex 벡터만 허용한다")
+    void deploymentIndexRejectsLocalEmbeddings() {
+        try (var postgres = new PostgreSQLContainer<>(DockerImageName.parse("paradedb/paradedb:0.26.0-pg17")
+                .asCompatibleSubstituteFor("postgres"))) {
+            postgres.start();
+            var db = new JdbcTemplate(new DriverManagerDataSource(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword()));
+            db.execute("CREATE TABLE vector_store (id UUID PRIMARY KEY, content TEXT NOT NULL, metadata JSON)");
+            UUID localChunk = UUID.randomUUID();
+            db.update("INSERT INTO vector_store(id,content,metadata) VALUES (?,?,?::json)", localChunk,
+                "근거", "{\"embeddingModel\":\"qwen3-embedding:8b/1536\"}");
+            var dao = new JdbcRetrievalDao(db, "gemini-embedding-001/1536");
+
+            assertThrows(IllegalStateException.class, dao::initializeIndex);
+            db.update("DELETE FROM vector_store WHERE id=?", localChunk);
+            dao.initializeIndex();
+        }
+    }
+
     @Test void indexesExistingRowsAndKeepsBm25AndNeighborsWithinOwner() {
         try (var postgres = new PostgreSQLContainer<>(DockerImageName.parse("paradedb/paradedb:0.26.0-pg17")
                 .asCompatibleSubstituteFor("postgres"))) {

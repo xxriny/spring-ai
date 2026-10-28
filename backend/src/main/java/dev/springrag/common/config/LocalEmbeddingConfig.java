@@ -7,8 +7,10 @@ import org.springframework.ai.ollama.api.OllamaEmbeddingOptions;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 
 @Configuration
+@Profile("local")
 public class LocalEmbeddingConfig {
     private static final String MODEL = "qwen3-embedding:8b";
     public static final String EMBEDDING_ID = MODEL + "/1536";

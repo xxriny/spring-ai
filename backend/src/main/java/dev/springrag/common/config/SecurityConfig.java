@@ -13,11 +13,13 @@ import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.context.annotation.Profile;
 
 @Configuration
 class SecurityConfig {
     @Bean
-    UserDetailsService users(@Value("${app.admin-password}") String adminPassword,
+    @Profile("!gcp")
+    UserDetailsService localUsers(@Value("${app.admin-password}") String adminPassword,
                              @Value("${app.user-password}") String userPassword) {
         if (adminPassword.isBlank() || userPassword.isBlank()) {
             throw new IllegalStateException("Set APP_ADMIN_PASSWORD and APP_USER_PASSWORD before starting");
@@ -29,10 +31,19 @@ class SecurityConfig {
     }
 
     @Bean
+    @Profile("gcp")
+    UserDetailsService gcpUsers(@Value("${app.admin-password}") String adminPassword) {
+        if (adminPassword.isBlank()) throw new IllegalStateException("Set APP_ADMIN_PASSWORD before starting");
+        var encoder = PasswordEncoderFactories.createDelegatingPasswordEncoder();
+        return new InMemoryUserDetailsManager(
+            User.withUsername("admin").password(encoder.encode(adminPassword)).roles("ADMIN").build());
+    }
+
+    @Bean
     SecurityFilterChain security(HttpSecurity http) throws Exception {
         return http.csrf(csrf -> csrf.disable())
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .authorizeHttpRequests(auth -> auth.requestMatchers("/api/health").permitAll()
+            .authorizeHttpRequests(auth -> auth.requestMatchers("/api/health", "/api/public/**").permitAll()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .anyRequest().authenticated())
             .httpBasic(Customizer.withDefaults())

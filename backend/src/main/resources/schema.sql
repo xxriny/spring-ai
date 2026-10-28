@@ -34,3 +34,19 @@ CREATE TABLE IF NOT EXISTS chat_message (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS chat_message_conversation ON chat_message(conversation_id, id);
+CREATE TABLE IF NOT EXISTS visitor_session (
+  id UUID PRIMARY KEY,
+  token_hash CHAR(64) NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS visitor_daily_usage (
+  usage_day DATE NOT NULL,
+  visitor_id UUID NOT NULL REFERENCES visitor_session(id) ON DELETE CASCADE,
+  used INT NOT NULL CHECK (used BETWEEN 1 AND 5),
+  PRIMARY KEY (usage_day, visitor_id)
+);
+CREATE TABLE IF NOT EXISTS global_daily_usage (
+  usage_day DATE PRIMARY KEY,
+  used INT NOT NULL CHECK (used BETWEEN 1 AND 30)
+);

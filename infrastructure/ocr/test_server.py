@@ -1,9 +1,19 @@
 import unittest
 
-from server import recognize, extract_pdf_request
+from server import recognize, extract_pdf_request, handler
 
 
 class OcrTest(unittest.TestCase):
+    def test_health_is_ready_after_model_load(self):
+        endpoint_type = handler(lambda image: [], lambda data: data)
+        endpoint = endpoint_type.__new__(endpoint_type)
+        codes = []
+        endpoint.path = '/health'
+        endpoint.send_response = codes.append
+        endpoint.end_headers = lambda: None
+        endpoint.do_GET()
+        self.assertEqual([200], codes)
+
     def test_recognize_joins_paddle_text_lines(self):
         image = b'fake-png'
         seen = []

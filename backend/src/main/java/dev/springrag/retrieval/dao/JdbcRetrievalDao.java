@@ -10,6 +10,8 @@ import java.util.Map;
 import java.util.ArrayList;
 import org.springframework.ai.document.Document;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.event.EventListener;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -19,20 +21,39 @@ import org.springframework.stereotype.Repository;
 public class JdbcRetrievalDao implements RetrievalDao {
     private static final String COLUMNS = "SELECT id,content,metadata FROM vector_store WHERE ";
     private final JdbcTemplate db;
+    private final String embeddingModelId;
     private final ObjectMapper json = new ObjectMapper();
     private final RowMapper<Document> mapper = (rs, row) ->
         new Document(rs.getString("id"), rs.getString("content"), metadata(rs.getString("metadata")));
 
-    public JdbcRetrievalDao(JdbcTemplate db) {
+    /**
+     * 현재 배포 모델의 색인 식별자로 검색 DAO를 연결한다.
+     * @param db 검색용 JDBC 연결
+     * @param embeddingModelId 현재 모델 이름과 임베딩 차원 식별자
+     */
+    @Autowired public JdbcRetrievalDao(JdbcTemplate db, @Value("${app.embedding-model-id}") String embeddingModelId) {
         this.db = db;
+        this.embeddingModelId = embeddingModelId;
     }
 
+    /**
+     * 로컬 모델을 쓰는 직접 호출자를 위한 검색 DAO를 연결한다.
+     * @param db 검색용 JDBC 연결
+     */
+    public JdbcRetrievalDao(JdbcTemplate db) {
+        this(db, LocalEmbeddingConfig.EMBEDDING_ID);
+    }
+
+    /**
+     * 현재 모델과 다른 벡터가 있으면 시작을 거부하고 BM25 색인을 준비한다.
+     * @throws IllegalStateException 현재 모델과 다른 임베딩 문서가 있는 경우
+     */
     @EventListener(ApplicationReadyEvent.class)
     public void initializeIndex() {
         Long incompatible = db.queryForObject("SELECT count(*) FROM vector_store WHERE metadata->>'embeddingModel' IS DISTINCT FROM ?",
-            Long.class, LocalEmbeddingConfig.EMBEDDING_ID);
+            Long.class, embeddingModelId);
         if (incompatible != null && incompatible > 0)
-            throw new IllegalStateException("기존 임베딩 문서가 있습니다. Qwen3-Embedding-8B로 재색인한 뒤 시작하세요");
+            throw new IllegalStateException("현재 임베딩 모델과 다른 문서가 있습니다. DB를 백업하고 " + embeddingModelId + "로 재색인한 뒤 시작하세요");
         db.execute("CREATE EXTENSION IF NOT EXISTS pg_search");
         db.execute("CREATE INDEX IF NOT EXISTS vector_store_bm25_idx ON vector_store USING paradedb (id, content)");
     }

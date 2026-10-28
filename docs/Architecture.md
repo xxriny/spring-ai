@@ -1,6 +1,6 @@
 # Spring RAG 아키텍처 (현행 구현)
 
-기준: 2026-10-27 저장소 코드. 이 문서는 실행 중인 구성과 코드 경계를 설명한다. 검색 API와 Ollama 생성 모델을 사용하는 대화 API가 있다.
+기준: 2026-10-28 저장소 코드. 로컬 실행은 Ollama 모델을 사용하고 GCP 모델 프로필은 Vertex AI용으로 준비되어 있다. GCP 배포·실호출은 아직 검증하지 않았다.
 
 ## 코드와 실행 단위
 
@@ -23,14 +23,14 @@ flowchart LR
     K -->|"원본 파일"| FS[(UPLOAD_DIR)]
     K -->|"PDF 본문·표 / OCR"| PDF["Python PDF·OCR :8092"]
     K -->|"VectorIndex / 임베딩"| VS["SpringAiVectorIndex<br/>Spring AI VectorStore"]
-    VS -->|"EmbeddingModel"| OL["Ollama qwen3-embedding:8b"]
+    VS -->|"EmbeddingModel"| OL["local: Ollama qwen3-embedding:8b<br/>gcp: Vertex gemini-embedding-001"]
     K --> KD["KnowledgeDao"]
     R --> VS
     R --> RD["JdbcRetrievalDao / BM25·이웃"]
     R -->|"후보 재정렬"| Q["Python Qwen 리랭커 :8091"]
     C --> CD["ChatDao"]
     C --> CM["Spring AI JDBC Chat Memory"]
-    C -->|"질문 재작성·답변 생성"| CHAT["Ollama qwen3.5:9b"]
+    C -->|"질문 재작성·답변 생성"| CHAT["local: Ollama qwen3.5:9b<br/>gcp: Vertex gemini-3.5-flash-lite"]
     VS --> DB[(PostgreSQL 17 / pgvector / pg_search)]
     KD --> DB
     RD --> DB
@@ -45,9 +45,11 @@ flowchart LR
 1. 관리자의 파일 업로드는 `SHARED`, 사용자의 업로드는 `PRIVATE`로 저장된다. 관리자만 `/api/admin/crawl`로 URL을 수집한다. 크롤러는 시작 URL과 같은 스킴·호스트·경로 하위만 방문하고 최대 100쪽을 동기 처리한다.
 2. [`KnowledgeService`](../backend/src/main/java/dev/springrag/knowledge/service/KnowledgeService.java)가 TXT는 `TextReader`, DOC/DOCX는 Tika, HTML은 JSoup으로 추출한다. HTML에서는 레이아웃 요소와 중첩 텍스트 반복, 동일 제목·본문 절의 중복을 제거한다. PDF는 Python `pdfplumber` 서비스가 머리말·꼬리말을 정리하고 표 행을 Markdown으로 분리한다. 본문과 표 행이 모두 없는 페이지에만 PaddleOCR을 적용한다.
 3. 본문은 `TokenTextSplitter`의 700토큰 청크를 기준으로 나누고, 같은 추출 단위 안의 연속 청크에 이전 내용 최대 100토큰을 겹친다. 최종 청크는 최대 800토큰이다. 표 행은 별도 청크로 저장하며 오버랩을 적용하지 않는다. 긴 표 셀은 여러 청크로 나누고, 긴 열 제목은 페이지·표·열마다 한 번만 저장한다. 이후 행의 셀은 같은 열 번호를 표시하며 각 청크는 800토큰 이하다.
-4. Ollama `qwen3-embedding:8b`에서 1536차원 벡터를 만들어 `vector_store`에 본문·벡터·메타데이터를 함께 적재한다. `knowledge_document`와 `knowledge_chunk`가 원본 문서 및 청크 ID를 관리한다. 파일 원본은 `UPLOAD_DIR`에 둔다. URL은 원문 SHA-256과 카테고리가 같으면 재색인을 건너뛴다.
+4. 로컬에서는 Ollama `qwen3-embedding:8b`, GCP 프로필에서는 Vertex AI `gemini-embedding-001`의 1536차원 벡터를 만들어 각 환경의 별도 `vector_store`에 본문·벡터·메타데이터를 함께 적재한다. `knowledge_document`와 `knowledge_chunk`가 원본 문서 및 청크 ID를 관리한다. 파일 원본은 `UPLOAD_DIR`에 둔다. URL은 원문 SHA-256과 카테고리가 같으면 재색인을 건너뛴다.
 
 공통 청크 메타데이터는 `documentId`, `scope`, `ownerId`, `title`, `source`, `category`, `chunkOrder`, `embeddingModel`이다. HTML에는 `section`, PDF에는 `page_number`·`contentType`, 표 행에는 `tableIndex`·`rowIndex`·`tableExtractionStatus`가 붙는다. 긴 표 제목과 셀 조각에는 `columnIndex`와 `tablePart=HEADER|CELL`도 붙여 같은 열을 연결한다. 적재 실패 시 새 벡터 삭제를 시도하며, 기존 URL 갱신은 문서 ID를 유지하고 청크를 교체한다.
+
+`embeddingModel`은 로컬에서 `qwen3-embedding:8b/1536`, GCP 프로필에서 `gemini-embedding-001/1536`이다. 시작 시 현재 값과 다른 행이 있으면 앱을 중단한다. 모델의 벡터 공간이 달라 로컬 벡터를 GCP DB로 복사할 수 없다. GCP 모델 엔드포인트 `global`은 서울 VM 위치와 별개이며, 실제 Vertex AI 접근성과 품질은 미검증이다. Spring AI 2.0.1의 Google GenAI 임베딩 구현은 `taskType` 옵션을 실제 SDK 요청에 반영하지 않으므로 문서·질문별 task type 분리는 보장하지 않는다.
 
 ## 검색과 답변
 

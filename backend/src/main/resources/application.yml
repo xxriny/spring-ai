@@ -1,4 +1,5 @@
 spring:
+  profiles.default: local
   datasource:
     url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/springrag}
     username: ${DATABASE_USER:springrag}
@@ -7,15 +8,6 @@ spring:
   servlet.multipart.max-file-size: 20MB
   servlet.multipart.max-request-size: 20MB
   ai:
-    model.chat: ollama
-    model.embedding: ollama
-    ollama:
-      base-url: ${OLLAMA_BASE_URL:http://127.0.0.1:11434}
-      chat:
-        model: ${OLLAMA_CHAT_MODEL:qwen3.5:9b}
-        num-ctx: 8192
-        think: false
-      embedding.model: qwen3-embedding:8b
     vectorstore.pgvector:
       initialize-schema: true
       dimensions: 1536

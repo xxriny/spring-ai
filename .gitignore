@@ -8,6 +8,7 @@ frontend/tsconfig.tsbuildinfo
 frontend/preview.png
 data/
 .env
+infrastructure/deploy/.env
 *.log
 __pycache__/
 *.pyc

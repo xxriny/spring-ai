@@ -97,4 +97,32 @@ class KnowledgeServiceTest {
             assertTrue(added.get().stream().allMatch(chunk -> "qwen3-embedding:8b/1536".equals(chunk.getMetadata().get("embeddingModel"))));
         }
     }
+
+    @Test @DisplayName("배포 색인은 Vertex 임베딩 모델 식별자를 메타데이터에 저장한다")
+    void deploymentIndexStoresVertexEmbeddingIdentity() throws Exception {
+        AtomicReference<List<Document>> added = new AtomicReference<>();
+        VectorStore vectors = (VectorStore) Proxy.newProxyInstance(VectorStore.class.getClassLoader(),
+            new Class<?>[] { VectorStore.class }, (proxy, method, args) -> {
+                if (method.getName().equals("add")) { added.set((List<Document>) args[0]); return null; }
+                throw new AssertionError(method.getName());
+            });
+        KnowledgeDao repository = new KnowledgeDao(new JdbcTemplate()) {
+            @Override public void save(UUID id, boolean existing, String scope, String owner, String title, String url,
+                                String path, String hash, String category, List<String> chunkIds) {}
+        };
+        PlatformTransactionManager manager = new PlatformTransactionManager() {
+            @Override public TransactionStatus getTransaction(TransactionDefinition definition) { return new SimpleTransactionStatus(); }
+            @Override public void commit(TransactionStatus status) {}
+            @Override public void rollback(TransactionStatus status) {}
+        };
+        var service = new KnowledgeService(repository, new SpringAiVectorIndex(vectors), new TransactionTemplate(manager),
+            tempDir.toString(), image -> { throw new AssertionError("OCR 호출됨"); },
+            bytes -> { throw new AssertionError("PDF 추출 호출됨"); }, "gemini-embedding-001/1536");
+
+        service.upload(new MockMultipartFile("file", "note.txt", "text/plain", "Vertex 검색 근거".getBytes()),
+            "Spring AI", "user", false);
+
+        assertTrue(added.get().stream().allMatch(chunk ->
+            "gemini-embedding-001/1536".equals(chunk.getMetadata().get("embeddingModel"))));
+    }
 }

@@ -1,0 +1,81 @@
+name: springrag-gcp
+
+services:
+  db:
+    image: paradedb/paradedb:0.26.0-pg17
+    command: ["postgres", "-c", "shared_preload_libraries=pg_search"]
+    environment:
+      POSTGRES_DB: springrag
+      POSTGRES_USER: springrag
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?set DATABASE_PASSWORD}
+    volumes:
+      - ${DATA_DIR:?set DATA_DIR}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U springrag -d springrag"]
+      interval: 10s
+      retries: 10
+    restart: unless-stopped
+
+  reranker:
+    image: ${RERANKER_IMAGE:?set RERANKER_IMAGE}
+    environment:
+      SERVICE_HOST: 0.0.0.0
+      HF_HOME: /models/huggingface
+    volumes:
+      - ${DATA_DIR}/reranker-models:/models
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health', timeout=2)"]
+      interval: 15s
+      retries: 40
+    restart: unless-stopped
+
+  ocr:
+    image: ${OCR_IMAGE:?set OCR_IMAGE}
+    environment:
+      SERVICE_HOST: 0.0.0.0
+      HOME: /models
+    volumes:
+      - ${DATA_DIR}/ocr-models:/models
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8092/health', timeout=2)"]
+      interval: 15s
+      retries: 40
+    restart: unless-stopped
+
+  backend:
+    image: ${BACKEND_IMAGE:?set BACKEND_IMAGE}
+    depends_on:
+      db:
+        condition: service_healthy
+      reranker:
+        condition: service_healthy
+      ocr:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: gcp
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:?set GOOGLE_CLOUD_PROJECT}
+      DATABASE_URL: jdbc:postgresql://db:5432/springrag
+      DATABASE_USER: springrag
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      APP_ADMIN_PASSWORD: ${APP_ADMIN_PASSWORD:?set APP_ADMIN_PASSWORD}
+      RERANKER_URL: http://reranker:8091/rerank
+      OCR_URL: http://ocr:8092/ocr
+      PDF_EXTRACTION_URL: http://ocr:8092/pdf/extract
+      UPLOAD_DIR: /data/uploads
+    volumes:
+      - ${DATA_DIR}/uploads:/data/uploads
+    restart: unless-stopped
+
+  web:
+    image: ${WEB_IMAGE:?set WEB_IMAGE}
+    depends_on:
+      - backend
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ${DATA_DIR}/caddy-data:/data
+      - ${DATA_DIR}/caddy-config:/config
+    restart: unless-stopped

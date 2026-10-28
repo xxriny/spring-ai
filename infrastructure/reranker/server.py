@@ -2,6 +2,7 @@
 
 import json
 import math
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -22,6 +23,13 @@ def rerank(request, predict):
 
 def handler(predict):
     class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path != '/health':
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.end_headers()
+
         def do_POST(self):
             if self.path != '/rerank':
                 self.send_error(404)
@@ -52,7 +60,7 @@ def main():
 
     # Ollama와 동시 실행 시 Metal이 종료되어 CPU로 고정하고, 10개 후보 추론 시간을 제한한다.
     model = CrossEncoder('Qwen/Qwen3-Reranker-0.6B', device='cpu', max_length=256)
-    ThreadingHTTPServer(('127.0.0.1', 8091), handler(model.predict)).serve_forever()
+    ThreadingHTTPServer((os.getenv('SERVICE_HOST', '127.0.0.1'), 8091), handler(model.predict)).serve_forever()
 
 
 if __name__ == '__main__':

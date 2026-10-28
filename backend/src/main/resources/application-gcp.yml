@@ -1,0 +1,21 @@
+spring:
+  datasource:
+    password: ${DATABASE_PASSWORD}
+  ai:
+    model:
+      chat: google-genai
+      embedding: none
+      embedding.text: google-genai
+    vectorstore.pgvector.max-document-batch-size: 1
+    google.genai:
+      project-id: ${GOOGLE_CLOUD_PROJECT}
+      location: global
+      chat.model: gemini-3.5-flash-lite
+      embedding:
+        project-id: ${GOOGLE_CLOUD_PROJECT}
+        location: global
+        text:
+          model: gemini-embedding-001
+          dimensions: 1536
+app:
+  embedding-model-id: ${spring.ai.google.genai.embedding.text.model}/1536
