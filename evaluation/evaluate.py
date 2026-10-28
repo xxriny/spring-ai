@@ -58,6 +58,30 @@ def evaluate_case(question, response):
             'expectedUrl': question['expectedUrl'], 'status': status, **stages, 'response': response}
 
 
+def collect_answer(record, request_fn):
+    if 'response' not in record:
+        return {'id': record['id'], 'stage': 'search', 'error': record['error']}
+    try:
+        conversation = request_fn('/api/conversations', {'scope': 'SHARED'})
+        answer = request_fn(f"/api/conversations/{conversation['id']}/messages", {'text': record['query']})
+        return {'id': record['id'], 'query': record['query'], 'expectedUrl': record['expectedUrl'],
+                'passages': record['response']['passages'], 'answer': answer['answer'],
+                'sources': answer['sources']}
+    except Exception as error:
+        return {'id': record['id'], 'stage': 'generation', 'error': str(error)}
+
+
+def resume_answers(records, output, request_fn):
+    completed = [json.loads(line) for line in output.read_text().splitlines()] if output.exists() else []
+    if [row['id'] for row in completed] != [row['id'] for row in records[:len(completed)]]:
+        raise ValueError('answer results do not match the search question order')
+    with output.open('a') as raw:
+        for record in records[len(completed):]:
+            raw.write(json.dumps(collect_answer(record, request_fn), ensure_ascii=False) + '\n')
+            raw.flush()
+    return len(records)
+
+
 def summarize(records):
     result = {}
     for language in ('all', 'en', 'ko'):
@@ -76,22 +100,42 @@ def summarize(records):
     return result
 
 
-def request(base, path, password, payload=None):
+def request(base, path, password, payload=None, timeout=90):
     headers = {'Authorization': 'Basic ' + base64.b64encode(f'admin:{password}'.encode()).decode()}
     if payload is not None:
         headers['Content-Type'] = 'application/json'
     data = json.dumps(payload).encode() if payload is not None else None
-    with urlopen(Request(base.rstrip('/') + path, data=data, headers=headers), timeout=90) as response:
+    with urlopen(Request(base.rstrip('/') + path, data=data, headers=headers), timeout=timeout) as response:
         return json.load(response)
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--execute', action='store_true', help='ingest four pages and issue 16 live searches')
+    parser.add_argument('--answers', action='store_true', help='also generate answers for Spring AI evaluation')
+    parser.add_argument('--resume-dir', help='continue missing answers in an existing result directory')
     parser.add_argument('--base-url', default='http://127.0.0.1:8080')
     args = parser.parse_args()
+    if args.answers and not args.execute:
+        parser.error('--answers requires --execute')
+    if args.resume_dir and args.execute:
+        parser.error('--resume-dir cannot be combined with --execute')
     questions = json.loads(QUESTIONS.read_text())
     urls = validate(questions)
+    if args.resume_dir:
+        output = Path(args.resume_dir).resolve()
+        if output.parent != (Path(__file__).parent / 'results').resolve():
+            parser.error('--resume-dir must be an evaluation/results run directory')
+        records = [json.loads(line) for line in (output / 'search.jsonl').read_text().splitlines()]
+        if len(records) != len(questions) or [row['id'] for row in records] != [row['id'] for row in questions]:
+            parser.error('search results are incomplete or do not match questions.json')
+        password = os.environ.get('EVAL_ADMIN_PASSWORD')
+        if not password:
+            parser.error('EVAL_ADMIN_PASSWORD is required for --resume-dir')
+        resume_answers(records, output / 'answer.jsonl', lambda path, payload:
+            request(args.base_url, path, password, payload, timeout=300))
+        print(json.dumps({'output': str(output), 'answers': len(records)}, ensure_ascii=False))
+        return
     if not args.execute:
         print(json.dumps({'questions': len(questions), 'corpusUrls': urls, 'quality': '미측정'}, ensure_ascii=False, indent=2))
         return
@@ -127,6 +171,9 @@ def main():
             raw.flush()
     report = summarize(records)
     (output / 'summary.json').write_text(json.dumps(report, ensure_ascii=False, indent=2))
+    if args.answers:
+        resume_answers(records, output / 'answer.jsonl', lambda path, payload:
+            request(args.base_url, path, password, payload, timeout=300))
     print(json.dumps({'output': str(output), 'summary': report}, ensure_ascii=False, indent=2))
 
 

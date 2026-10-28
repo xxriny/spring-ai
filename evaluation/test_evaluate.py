@@ -1,5 +1,8 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
+import evaluate
 from evaluate import evaluate_case, summarize
 
 
@@ -47,6 +50,51 @@ class EvaluationTest(unittest.TestCase):
         self.assertEqual(1, result['bm25Candidates']['chunkRank'])
         self.assertEqual(1, result['passages']['chunkRank'])
         self.assertEqual(1, summarize([result])['all']['passages']['chunk']['hit@1'])
+
+    def test_collect_answer_keeps_search_passages_and_generated_response(self):
+        calls = []
+
+        def request(path, payload):
+            calls.append((path, payload))
+            if path == '/api/conversations':
+                return {'id': 'conversation-1'}
+            return {'answer': 'PDF는 PagePdfDocumentReader로 읽습니다.',
+                    'sources': [{'documentId': 'doc-1'}]}
+
+        record = {'id': 'etl-03', 'query': 'Which reader extracts PDF pages?',
+                  'expectedUrl': 'https://docs.example/a',
+                  'response': {'passages': [{'text': 'PagePdfDocumentReader uses PDFBox',
+                                            'documentId': 'doc-1'}]}}
+        result = evaluate.collect_answer(record, request)
+
+        self.assertEqual(['PDF는 PagePdfDocumentReader로 읽습니다.', 'doc-1'],
+                         [result['answer'], result['passages'][0]['documentId']])
+        self.assertEqual([('/api/conversations', {'scope': 'SHARED'}),
+                          ('/api/conversations/conversation-1/messages',
+                           {'text': record['query']})], calls)
+
+    def test_collect_answer_records_search_and_generation_failures(self):
+        failed_search = {'id': 'q1', 'error': 'search unavailable'}
+        self.assertEqual({'id': 'q1', 'stage': 'search', 'error': 'search unavailable'},
+                         evaluate.collect_answer(failed_search, lambda *_: self.fail('called')))
+
+        def unavailable(*_):
+            raise RuntimeError('model unavailable')
+
+        failed_generation = dict(failed_search, query='Where?', response={'passages': []})
+        self.assertEqual({'id': 'q1', 'stage': 'generation', 'error': 'model unavailable'},
+                         evaluate.collect_answer(failed_generation, unavailable))
+
+    def test_resume_answers_skips_completed_questions(self):
+        records = [{'id': 'q1', 'error': 'search unavailable'},
+                   {'id': 'q2', 'error': 'search unavailable'}]
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / 'answer.jsonl'
+            output.write_text('{"id":"q1","stage":"search","error":"search unavailable"}\n')
+            self.assertEqual(2, evaluate.resume_answers(records, output, lambda *_: self.fail('called')))
+            self.assertEqual(2, len(output.read_text().splitlines()))
+            self.assertEqual(2, evaluate.resume_answers(records, output, lambda *_: self.fail('called')))
+            self.assertEqual(2, len(output.read_text().splitlines()))
 
 
 if __name__ == '__main__':

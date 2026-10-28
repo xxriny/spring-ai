@@ -75,5 +75,6 @@
 | [API 계약](docs/ApiContract.md) | 인증·권한, 엔드포인트, 요청·응답·오류 |
 | [아키텍처](docs/Architecture.md) | 컴포넌트, 데이터 흐름, 저장 모델 |
 | [하이브리드 검색](docs/HybridRetrieval.md) | 검색 단계, 점수, 벡터 메타데이터, 평가 기준 |
+| [답변 품질 평가](docs/AnswerQualityEvaluation.md) | Spring AI 평가기 실행과 결과 해석 |
 | [로컬 운영 런북](runbooks/SpringRagLocalV0_1_0.md) | 설치·실행·점검·백업·복구 |
 | [인프라 안내](infrastructure/README.md) | DB·OCR·리랭커 실행 파일 |
