@@ -36,14 +36,14 @@ VM에는 전용 서비스 계정을 연결하고 Vertex AI 사용자 권한을 �
 1. VM에서 데이터 디스크가 `/mnt/spring-rag-data`에 마운트됐는지 `findmnt /mnt/spring-rag-data`로 확인한다. 마운트 실패 상태에서 Compose를 시작하면 데이터가 부팅 디스크에 생길 수 있으므로 중단한다.
 2. `sudo install -d -m 700 /mnt/spring-rag-data/postgres /mnt/spring-rag-data/reranker-models /mnt/spring-rag-data/ocr-models /mnt/spring-rag-data/caddy-data /mnt/spring-rag-data/caddy-config`로 보존 디렉터리를 만들고, 업로드 디렉터리는 `sudo install -d -o 10001 -g 10001 -m 700 /mnt/spring-rag-data/uploads`로 만든다. 백엔드 컨테이너는 UID 10001로 실행한다.
 3. 저장소의 `infrastructure/deploy/.env.example`을 VM에서 `infrastructure/deploy/.env`로 복사해 도메인, 프로젝트, 고정된 이미지 태그와 긴 무작위 DB·관리자 비밀번호를 채운다. `chmod 600 infrastructure/deploy/.env`를 적용하고 Git에 넣지 않는다. 예시의 `COMMIT_SHA`와 `replace-with-long-random-value`를 그대로 쓰지 않는다.
-4. 저장소 루트에서 `docker compose --env-file infrastructure/deploy/.env -f infrastructure/deploy/compose.yaml config -q`로 구성을 검증한다. 이미지를 빌드·업로드한 뒤 같은 옵션으로 `pull`, `up -d`, `ps`를 실행한다. 공개 도메인 DNS가 VM 고정 IP를 가리키고 80·443 방화벽이 허용되어야 Caddy가 인증서를 발급한다.
-5. `curl -fsS http://localhost/api/health`는 HTTPS가 활성화되면 리다이렉트될 수 있으므로 `curl -fsS https://app.<도메인>/api/health`로 헬스 체크한다. 공개 방문자 세션·서로 다른 브라우저의 대화 분리·업로드와 삭제 거부를 확인한 뒤 안내 페이지에 시연 가능 상태를 표시한다.
+4. 저장소 루트에서 `docker compose --env-file infrastructure/deploy/.env -f infrastructure/deploy/compose.yaml config -q`로 구성을 검증한다. GitHub Actions가 게시한 같은 커밋 SHA의 이미지를 `pull`한 뒤 `up -d`, `ps`를 실행한다. 구매한 도메인이 없다면 `APP_DOMAIN=<고정 IPv4>.sslip.io`를 사용할 수 있다. 이 무료 DNS 서비스는 외부 의존성이므로 공개 시연 전에 이름 확인과 인증서 발급을 검증한다. 두 경우 모두 80·443 방화벽이 허용되어야 Caddy가 인증서를 발급한다.
+5. `curl -fsS http://localhost/api/health`는 HTTPS가 활성화되면 리다이렉트될 수 있으므로 `curl -fsS https://<APP_DOMAIN>/api/health`로 헬스 체크한다. 공개 방문자 세션·서로 다른 브라우저의 대화 분리·업로드와 삭제 거부를 확인한 뒤 안내 페이지에 시연 가능 상태를 표시한다.
 
 프런트엔드 이미지 빌드 시 `--build-arg VITE_PUBLIC_DEMO=true`를 전달해야 공개 체험 진입 버튼을 표시한다. 로컬 프런트엔드는 기본값 `false`로 기존 로그인을 유지한다. 앱 컨테이너는 VM 서비스 계정의 메타데이터 인증을 사용하며 JSON 키 파일을 마운트하지 않는다. Artifact Registry 읽기 권한, Vertex AI 사용자 권한 및 API 사용 가능 여부는 실제 배포 전에 확인한다.
 
 Mac에서 직접 이미지를 빌드하면 VM의 `linux/amd64`와 CPU 아키텍처가 다를 수 있다. 빌드·푸시에는 `docker buildx build --platform linux/amd64 --push`를 사용하고 이미지 태그에는 **빌드한 코드의 커밋 SHA**를 넣는다. 현재 작업 트리가 커밋되지 않았으면 `git rev-parse HEAD`의 SHA는 이미지 내용과 다르므로 먼저 작업 내용을 검토·커밋해야 한다.
 
-`.github/workflows/ci.yml`은 PR과 `main`에서 Java 단위·DB 통합 테스트, Python 테스트, React 두 모드 빌드, Compose 형식 및 4개 컨테이너 빌드를 검증한다. 이 워크플로는 이미지를 Artifact Registry에 게시하거나 VM에 배포하지 않는다. GitHub Actions 실행 기록은 아직 없으며 GitHub와 GCP의 Workload Identity Federation, 수동 승인 배포, 헬스 체크 실패 시 자동 롤백은 별도 연결이 필요하다.
+`.github/workflows/ci.yml`은 PR과 `main`에서 Java 단위·DB 통합 테스트, Python 테스트, React 두 모드 빌드, Compose 형식 및 4개 컨테이너 빌드를 검증한다. `main` 푸시에서 검증이 끝나면 GitHub Actions 저장소 변수 `GCP_WIF_PROVIDER`(제공자 전체 이름)와 `GCP_IMAGE_PUBLISHER`(서비스 계정 이메일)를 사용해 Workload Identity Federation으로 인증하고, 4개 이미지를 Artifact Registry의 `spring-rag` 저장소에 커밋 SHA 태그로 게시한다. PR에는 게시 권한을 사용하지 않는다. GitHub Actions의 최초 빌드 검증은 [실행 기록](https://github.com/xxriny/spring-ai/actions/runs/40650609705)으로 확인했지만, 이미지 게시·VM 배포·수동 승인·헬스 체크 실패 시 자동 롤백은 아직 실증되지 않았다.
 
 ## 현재 검증 경계
 

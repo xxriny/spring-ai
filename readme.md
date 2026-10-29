@@ -86,4 +86,4 @@
 | [GCP 배포 런북](runbooks/SpringRagGcpV0_1_0.md) | Vertex AI 프로필·별도 색인·VM Compose·검증 경계 |
 | [인프라 안내](infrastructure/README.md) | DB·OCR·리랭커 실행 파일 |
 
-PR 검증은 [.github/workflows/ci.yml](.github/workflows/ci.yml)에 정의했다. GitHub 실행 결과와 GCP 배포 결과는 아직 기록되지 않았다.
+PR 검증과 `main`의 SHA 태그 이미지 게시는 [.github/workflows/ci.yml](.github/workflows/ci.yml)에 정의했다. 최초 빌드 검증은 [GitHub Actions 실행 기록](https://github.com/xxriny/spring-ai/actions/runs/40650609705)에서 확인했다. Registry 게시와 GCP 배포 결과는 아직 기록되지 않았다.
